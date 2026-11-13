@@ -77,6 +77,8 @@ def load_market(args, strategies, end: dt.date, want_db: bool = False, extra_sym
     """Bars for every symbol the given strategies need, plus the DB engine if one is in use."""
     lookback = max([s.required_lookback() for s in strategies] or [1])
     fetch_start = args.start - dt.timedelta(days=math.ceil(lookback * 1.6) + 15)
+    if getattr(args, "cash_rate", "0") == "tbill":
+        extra_symbols = (*extra_symbols, "IRX")
     symbols = tuple(
         dict.fromkeys([*extra_symbols, *(sym for s in strategies for sym in s.required_symbols())])
     )
@@ -94,6 +96,16 @@ def load_market(args, strategies, end: dt.date, want_db: bool = False, extra_sym
     return load_bars(source, symbols, fetch_start, end), engine, store
 
 
+def cash_yield(args, bars):
+    """Annual interest on idle cash: a constant, or the 13-week T-bill yield by date."""
+    if args.cash_rate == "tbill":
+        return bars["IRX"]["close"] / 100
+    try:
+        return float(args.cash_rate)
+    except ValueError:
+        raise SystemExit(f"--cash-rate must be a number or 'tbill', got {args.cash_rate!r}") from None
+
+
 def cmd_backtest(args) -> None:
     strategy = build_strategy(args.strategy, args.param)
     benchmark = build_strategy(args.benchmark, args.benchmark_param)
@@ -101,12 +113,13 @@ def cmd_backtest(args) -> None:
     end = args.end or last_complete_session()
     bars, engine, store = load_market(args, [strategy, benchmark], end, want_db=bool(args.save))
 
-    result = run_backtest(strategy, bars, args.start, end, args.cash, args.slippage_bps)
+    cy = cash_yield(args, bars)
+    result = run_backtest(strategy, bars, args.start, end, args.cash, args.slippage_bps, cy)
     if result.daily.empty:
         raise SystemExit("no days simulated (not enough data after warm-up?)")
     # Benchmark over exactly the days the strategy traded, for a fair comparison.
     bench = run_backtest(
-        benchmark, bars, result.daily.index[0], result.daily.index[-1], args.cash, args.slippage_bps
+        benchmark, bars, result.daily.index[0], result.daily.index[-1], args.cash, args.slippage_bps, cy
     )
 
     if args.verbose:
@@ -128,6 +141,7 @@ def cmd_backtest(args) -> None:
             source=args.source,
             slippage_bps=args.slippage_bps,
             label=args.label,
+            cash_rate=str(args.cash_rate),
         )
         print(f"saved as run #{run_id}")
 
@@ -159,13 +173,14 @@ def cmd_sweep(args) -> None:
         f"{len(grid)} combinations x {len(periods)} periods: "
         + ", ".join(f"{name} {s}..{e}" for name, (s, e) in periods.items())
     )
-    table = research.sweep(cls, base, grid, bars, periods, args.cash, args.slippage_bps)
+    cy = cash_yield(args, bars)
+    table = research.sweep(cls, base, grid, bars, periods, args.cash, args.slippage_bps, cy)
     first = next(iter(periods))
     rank_col = f"{first}_{args.rank}"
     # Higher is better for all rank metrics (drawdowns are negative numbers).
     table = table.sort_values(rank_col, ascending=False).head(args.top)
 
-    bench = research.benchmark_rows(benchmark, bars, periods, args.cash, args.slippage_bps)
+    bench = research.benchmark_rows(benchmark, bars, periods, args.cash, args.slippage_bps, cy)
     bench_label = {k: "" for k in grid[0]} | {next(iter(grid[0])): f"[{benchmark!r}]"}
     table = pd.concat([pd.DataFrame([{**bench_label, **bench}]), table], ignore_index=True)
 
@@ -174,6 +189,88 @@ def cmd_sweep(args) -> None:
     print(f"ranked by {rank_col} (choose using {first} columns only)")
     with pd.option_context("display.width", 250, "display.max_columns", 40):
         print(table.to_string(index=False))
+
+
+def cmd_walkforward(args) -> None:
+    from trading import research
+    from trading.engine import BacktestResult, performance
+
+    cls = load_strategy(args.strategy)
+    base = parse_params(cls, args.param)
+    grid = research.expand_grid(cls, args.grid)
+    benchmark = build_strategy(args.benchmark, args.benchmark_param)
+    references = [
+        cls(**{**base, **parse_params(cls, [p for p in ref.split(",") if p])}) for ref in args.reference
+    ]
+
+    end = args.end or last_complete_session()
+    variants = [cls(**{**base, **combo}) for combo in grid]
+    bars, _, _ = load_market(args, [*variants, benchmark, *references], end)
+    cy = cash_yield(args, bars)
+
+    print(
+        f"{len(grid)} combinations; each year from {args.first_test_year} is traded with the combination "
+        f"that had the best {args.rank} from {args.start} through the previous year."
+    )
+    years, oos = research.walk_forward(
+        cls,
+        base,
+        grid,
+        bars,
+        args.start,
+        end,
+        args.first_test_year,
+        args.rank,
+        args.cash,
+        args.slippage_bps,
+        cy,
+    )
+    oos_days = oos.index
+
+    def oos_curve(strategy):
+        """Equity (1.0 before the first out-of-sample day) over exactly the OOS days.
+
+        Runs from --start, like the walk-forward combos, so positions on day one are realistic.
+        """
+        eq = run_backtest(strategy, bars, args.start, oos_days[-1], args.cash, args.slippage_bps, cy)
+        rets = eq.daily["equity"].pct_change().reindex(oos_days).fillna(0.0)
+        return (1 + rets).cumprod()
+
+    curves = {"walk-forward": oos, f"{benchmark.name}": oos_curve(benchmark)}
+    for spec, ref in zip(args.reference, references, strict=True):
+        curves[f"fixed {spec}"] = oos_curve(ref)
+
+    def year_returns(eq):
+        yearly = eq.groupby([d.year for d in eq.index]).last()
+        return yearly / yearly.shift(1).fillna(1.0) - 1
+
+    table = years.rename(columns={"year_return": "walk-forward return"})
+    for label, eq in list(curves.items())[1:]:
+        table[f"{label} return"] = table["year"].map(year_returns(eq))
+    for col in table.columns:
+        if col.endswith("return"):
+            table[col] = [_fmt("total_return", v) for v in table[col]]
+    table[f"train_{args.rank}"] = [f"{v:.2f}" for v in table[f"train_{args.rank}"]]
+    with pd.option_context("display.width", 250, "display.max_columns", 30):
+        print(table.to_string(index=False))
+
+    summaries = {}
+    for label, eq in curves.items():
+        perf = performance(eq, 1.0)
+        summaries[label] = {
+            "period": f"{oos_days[0]}..{oos_days[-1]}",
+            **{k: perf[k] for k in ("total_return", "cagr", "volatility", "sharpe", "max_drawdown")},
+        }
+    print()
+    print_summary(summaries)
+
+    if args.plot:
+        results = {
+            label: BacktestResult(label, pd.DataFrame({"equity": eq * args.cash}), pd.DataFrame(), args.cash)
+            for label, eq in curves.items()
+        }
+        plot_equity(results, args.plot)
+        print(f"wrote chart to {args.plot}")
 
 
 def parse_measure(spec: str):
@@ -251,7 +348,7 @@ def cmd_feasibility(args) -> None:
     if measured_strategies:
         print("\n4) MEASURED INDICATORS (balanced accuracy: always-long and coin flips score 50%)")
         for strat in measured_strategies:
-            res = run_backtest(strat, bars, args.start, end, args.cash, slip)
+            res = run_backtest(strat, bars, args.start, end, args.cash, slip, cash_yield(args, bars))
             holding = res.daily["holding"].reindex(rets.index).fillna("CASH")
             pos = np.where(holding == args.long, 1, np.where(holding == args.short, -1, 0))
             acc = F.balanced_accuracy(pos, rets["index"])
@@ -393,6 +490,12 @@ def parse_args(argv=None) -> argparse.Namespace:
             help="where price bars are cached (auto: postgres if DATABASE_URL is set, else csv)",
         )
         sp.add_argument("--cache-dir", default=".cache", help="directory for --store csv")
+        sp.add_argument(
+            "--cash-rate",
+            default="tbill",
+            help="annual interest on idle cash: a number like 0.04, or 'tbill' for the historical "
+            "13-week T-bill yield (default; Yahoo data)",
+        )
 
     bt = sub.add_parser("backtest", help="simulate a strategy on daily bars")
     strategy_args(bt)
@@ -429,6 +532,24 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     sw.add_argument("--rank", choices=["sharpe", "cagr", "max_drawdown"], default="sharpe")
     sw.add_argument("--top", type=int, default=20, help="show the best N combinations")
+
+    wf = sub.add_parser(
+        "walkforward",
+        help="re-tune every year on all prior years, trade the next year: an honest out-of-sample test",
+    )
+    strategy_args(wf)
+    market_args(wf, slippage_default=5.0)
+    wf.add_argument("-g", "--grid", action="append", required=True, metavar="KEY=V1,V2,...")
+    wf.add_argument("--first-test-year", type=int, default=2015)
+    wf.add_argument("--rank", choices=["sharpe", "cagr", "max_drawdown"], default="sharpe")
+    wf.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        metavar="K=V,K=V",
+        help="also show a fixed param choice for comparison, e.g. window=20,threshold=0.2 (repeatable)",
+    )
+    wf.add_argument("--plot", help="write the out-of-sample equity curves to this PNG")
 
     fe = sub.add_parser(
         "feasibility",
@@ -484,6 +605,7 @@ def main(argv=None) -> None:
         "backtest": cmd_backtest,
         "sweep": cmd_sweep,
         "feasibility": cmd_feasibility,
+        "walkforward": cmd_walkforward,
         "runs": cmd_runs,
         "db": cmd_db,
         "dry-run": cmd_dry_run,

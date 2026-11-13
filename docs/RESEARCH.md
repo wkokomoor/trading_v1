@@ -278,3 +278,54 @@ The table uses 5 bps slippage, plus 10 bps extra on stop fills. Stops are simula
 ### Verdict
 
 Keep the daily open → next open design. The risk control that works, the volatility filter, operates at daily frequency. Intraday ability is still valuable for **operations**: an emergency exit and the kill switch in Phase D. Intraday *strategies* would need years of minute-level data, and Schwab keeps only a short window of it, so they'd need a paid data source.
+
+---
+
+## Part 5: The volatility filter as a strategy (2026-11-13)
+
+`strategies/vol_filter.py`: hold UPRO while SPY's realized volatility over the last `window` days is below `threshold`, otherwise hold cash. There's an optional trend filter and an optional risk-off asset.
+
+**Change to the backtester:** idle cash now earns the historical 13-week T-bill yield (`--cash-rate tbill`, now the default), or any fixed rate you pass. Rates ranged from about 0% (2010–15, 2020–21) to about 5% (2023–24). Runs record which cash rate they used.
+
+### Tuning on 2010–2019, checking on 2020–2026
+
+```sh
+uv run trading sweep -s vol_filter -g window=10,20,40,60 -g threshold=0.15,0.175,0.2,0.225,0.25,0.3 -g trend_window=0,200
+```
+
+The best training Sharpe went to window 20 / threshold 20% (train 28.8%, −35%; test 22.0%, −38%, Sharpe 0.73) and window 40 / 20%. But neighboring settings swing a lot. For example, 20 / 22.5% looked fine in train and then made 15.8% with a −59% drawdown in test. Adding the 200-day trend filter never improved training results.
+
+### Walk-forward: does re-tuning every year help? No.
+
+Each year from 2015, the walk-forward picked the combination with the best Sharpe on all prior years and traded the next year with it.
+
+```sh
+uv run trading walkforward -s vol_filter -g window=10,20,40,60 -g threshold=0.15,0.175,0.2,0.225,0.25,0.3 \
+    -g trend_window=0,200 --reference window=20,threshold=0.2 --reference window=40,threshold=0.2 \
+    --plot docs/img/vol_filter_walkforward.png
+```
+
+![Walk-forward](img/vol_filter_walkforward.png)
+
+| Jan 2015 – Nov 2026, 5 bps, T-bill cash | CAGR | Max drawdown | Sharpe |
+|---|---|---|---|
+| Hold SPY | 13.5% | −34% | 0.81 |
+| Hold UPRO | 24.4% | −77% | 0.68 |
+| **vol_filter, re-tuned yearly (walk-forward)** | 14.1% | −56% | 0.54 |
+| **vol_filter, fixed 20-day / 20%** | **22.1%** | **−38%** | **0.74** |
+| vol_filter, fixed 40-day / 20% | 20.4% | −47% | 0.70 |
+
+1. **Re-tuning hurt.** The yearly choice changed six times in 12 years, each time chasing whatever had worked recently, and it badly underperformed every fixed setting. The parameter landscape is too noisy for the best past setting to predict the best future one.
+2. **A fixed, round-number setting did best: 20 trading days, roughly one month, and a 20% volatility threshold.** It made about 90% of UPRO's return (22.1% vs 24.4% a year) with half the max drawdown (−38% vs −77%). It is the best result in this research so far.
+3. **Be honest about how 20 / 20% was chosen.** It was picked as a textbook default *before* any tuning (the Part 3 screen), not optimized. But I have since seen its full-period results, so it isn't a perfectly clean out-of-sample result either. The best defense is that it's the obvious round-number choice, and that 15%, 25% and 40-day versions behave similarly, if a bit worse.
+4. **It roughly ties SPY on Sharpe; it doesn't beat it.** Over 2015–2026 it scored 0.74 vs SPY's 0.81. Over the full Apr 2010 – Nov 2026 period (run #9: 26.2% CAGR, −38% max drawdown, in the market 83% of days) it scored 0.84, exactly SPY's 0.84. What it offers is about 1.6–1.9x SPY's annual return, for a max drawdown about 5 percentage points deeper than SPY's (−38% vs −34%) and about 2x SPY's day-to-day volatility.
+
+### Recommendation
+
+Adopt **`vol_filter` with fixed defaults (window 20, threshold 20%, cash when off)** as the strategy to carry into Phase D (shadow trading), and **don't re-tune it on a schedule**. Treat the parameters as fixed policy. Only revisit them for a structural reason, never because of a recent bad stretch.
+
+Known risks to watch in shadow trading:
+
+- **Gap risk.** A crash that arrives without warning, while volatility is still low (for example February 2018 or February 2020), hits a full 3x position before the filter reacts. Most of this strategy's −38% max drawdown comes from moments like these.
+- **Whipsaws.** About 4–5 trades a year (74 over Apr 2010 – Nov 2026), so costs are small, but each switch happens on a volatile day. Real fills will show whether 5 bps per trade was realistic.
+- **This rests on one main historical path (2010–2026).** A long, grinding bear market with *low* volatility (rare, but possible) would be its weak spot.

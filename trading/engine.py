@@ -169,11 +169,15 @@ def run_backtest(
     end: dt.date,
     cash: float = 10_000.0,
     slippage_bps: float = 0.0,
+    cash_yield: float | pd.Series = 0.0,
 ) -> BacktestResult:
     """Simulate `strategy` on daily bars: decide and fill at each open, mark at the close.
 
     Only dates where every required symbol has a bar are simulated, and only once
     the strategy has `lookback` completed bars of history.
+
+    cash_yield: annual interest rate earned on idle cash (e.g. 0.04), or a Series of
+    annual rates by date (e.g. the 13-week T-bill yield); credited daily as rate / 252.
     """
     symbols = strategy.required_symbols()
     lookback = strategy.required_lookback()
@@ -185,6 +189,13 @@ def run_backtest(
         log.warning("data for %s only available from %s (requested %s)", symbols, days[0], start)
 
     broker = SimBroker(cash=cash, slippage_bps=slippage_bps)
+    if isinstance(cash_yield, pd.Series):
+        # Rate known as of each day (last published value on or before it).
+        daily_rate = (
+            cash_yield.sort_index().reindex(days, method="ffill").fillna(0.0) / TRADING_DAYS
+        ).to_dict()
+    else:
+        daily_rate = dict.fromkeys(days, cash_yield / TRADING_DAYS)
     last_weights: Weights | None = None
     rows = []
     warmup = 0
@@ -206,6 +217,9 @@ def run_backtest(
             orders = rebalance_orders(weights, broker.positions, broker.cash, opens, slippage_bps)
             broker.execute(orders, day)
             last_weights = dict(weights)
+
+        if broker.cash > 0 and daily_rate[day]:
+            broker.cash += broker.cash * daily_rate[day]
 
         closes = {s: float(bars[s].at[day, "close"]) for s in broker.positions}
         rows.append(
@@ -268,7 +282,10 @@ def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
     ax.set_yscale("log")
 
     # End-of-line labels, nudged apart vertically so close finishes don't overlap.
-    fig.subplots_adjust(left=0.09, right=0.78, top=0.93, bottom=0.1 + 0.045 * n)
+    # Leave room on the right for the longest label (~0.0075 of the 10in width per 9pt character).
+    longest = max(len(text) for _, _, text in ends)
+    right = min(0.86, max(0.55, 1 - 0.0075 * longest - 0.03))
+    fig.subplots_adjust(left=0.09, right=right, top=0.93, bottom=0.1 + 0.045 * n)
     to_px = ax.transData.transform
     min_gap_pt = 12
     placed = []
