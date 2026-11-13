@@ -31,7 +31,9 @@ def sessions(start: dt.date, end: dt.date) -> list[dt.date]:
 def last_complete_session(now: dt.datetime | None = None) -> dt.date:
     """Most recent session whose close has passed."""
     now = now or dt.datetime.now(ET)
-    sched = mcal.get_calendar("NYSE").schedule(start_date=now.date() - dt.timedelta(days=10), end_date=now.date())
+    sched = mcal.get_calendar("NYSE").schedule(
+        start_date=now.date() - dt.timedelta(days=10), end_date=now.date()
+    )
     closed = sched[sched["market_close"] <= pd.Timestamp(now)]
     return closed.index[-1].date()
 
@@ -79,7 +81,9 @@ class SchwabSource:
         if not candles:
             return pd.DataFrame(columns=COLUMNS)
         df = pd.DataFrame(candles)
-        df.index = [ts.date() for ts in pd.to_datetime(df.pop("datetime"), unit="ms", utc=True).dt.tz_convert(ET)]
+        df.index = [
+            ts.date() for ts in pd.to_datetime(df.pop("datetime"), unit="ms", utc=True).dt.tz_convert(ET)
+        ]
         return _normalize(df)
 
 

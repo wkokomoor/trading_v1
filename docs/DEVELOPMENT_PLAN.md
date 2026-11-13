@@ -221,10 +221,10 @@ Each phase ends in something usable. Phases B and C can run in parallel.
 
 ### Phase A: Housekeeping (½ day)
 
-- [ ] Commit the Phase 2 branch and open a PR.
-- [ ] Add `pyproject.toml` (package metadata, `ruff` lint/format config).
-- [ ] Add GitHub Actions CI: `ruff` + `pytest` on every push and PR.
-- [ ] Pin exact dependency versions (lock file) so local and cloud builds match.
+- [x] Commit the Phase 2 branch and open a PR.
+- [x] Add `pyproject.toml` (package metadata, `ruff` lint/format config, `trading` command).
+- [x] Add GitHub Actions CI: `ruff` + `pytest` on every push and PR.
+- [x] Pin exact dependency versions: `uv.lock`, a single lock file valid on both macOS and Linux.
 
 ### Phase B: PostgreSQL persistence (2–3 days)
 

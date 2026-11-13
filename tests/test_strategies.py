@@ -1,8 +1,6 @@
-import datetime as dt
-
 import pytest
-
 from conftest import make_bars
+
 from trading.engine import run_backtest
 from trading.strategy import MarketView, available_strategies, load_strategy, parse_params
 
@@ -21,13 +19,13 @@ def spy_vix_view(march_2025, vix, spy_change):
 @pytest.mark.parametrize(
     "vix, spy_change, expected",
     [
-        (25, 0.00, {"SPXU": 1.0}),   # volatile, flat -> short
-        (25, 0.01, {"SPXU": 1.0}),   # volatile, up -> short
-        (25, -0.01, None),           # volatile, down -> hold
-        (18, 0.00, {"UPRO": 1.0}),   # middle band, flat -> long
+        (25, 0.00, {"SPXU": 1.0}),  # volatile, flat -> short
+        (25, 0.01, {"SPXU": 1.0}),  # volatile, up -> short
+        (25, -0.01, None),  # volatile, down -> hold
+        (18, 0.00, {"UPRO": 1.0}),  # middle band, flat -> long
         (15, -0.01, {"UPRO": 1.0}),  # calm, down -> long
-        (15, 0.01, None),            # calm, up -> hold
-        (20, 0.00, {"UPRO": 1.0}),   # exactly vix_high is not volatile
+        (15, 0.01, None),  # calm, up -> hold
+        (20, 0.00, {"UPRO": 1.0}),  # exactly vix_high is not volatile
     ],
 )
 def test_spy_vix_signal(march_2025, vix, spy_change, expected):
@@ -45,8 +43,9 @@ def test_spy_vix_end_to_end(march_2025):
     vix = [15, 15, 15, 25, 25, 25, 15, 15, 15, 15]
     upro = [50, 50, 51, 52, 50, 49, 50, 51, 52, 53]
     spxu = [20, 20, 19, 18, 20, 21, 20, 19, 18, 17]
-    bars = {s: make_bars(march_2025, px) for s, px in
-            {"SPY": spy, "VIX": vix, "UPRO": upro, "SPXU": spxu}.items()}
+    bars = {
+        s: make_bars(march_2025, px) for s, px in {"SPY": spy, "VIX": vix, "UPRO": upro, "SPXU": spxu}.items()
+    }
     res = run_backtest(SpyVix(), bars, march_2025[1], march_2025[-1], cash=1000)
     assert list(res.daily["signal"]) == [1, 1, -1, -1, -1, 1, 1, 1, 1]
     assert list(res.daily["holding"]) == ["UPRO"] * 2 + ["SPXU"] * 3 + ["UPRO"] * 4

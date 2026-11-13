@@ -15,8 +15,14 @@ from trading.strategy import MarketView, Strategy
 class SpyVix(Strategy):
     name = "spy_vix"
     symbols = ("SPY", "VIX", "UPRO", "SPXU")
-    params = {"vix_high": 20.0, "vix_low": 17.0, "spy_high": 0.005, "spy_low": -0.005,
-              "long": "UPRO", "short": "SPXU"}
+    params = {
+        "vix_high": 20.0,
+        "vix_low": 17.0,
+        "spy_high": 0.005,
+        "spy_low": -0.005,
+        "long": "UPRO",
+        "short": "SPXU",
+    }
     lookback = 1
 
     def required_symbols(self):

@@ -45,8 +45,16 @@ def run_dry_run(client, strategy: Strategy, now: dt.datetime | None = None) -> l
     last = {}
     for s, t in tickers.items():
         q = quotes[t]["quote"]
-        today_row = pd.DataFrame({"open": [q["openPrice"]], "high": [float("nan")], "low": [float("nan")],
-                                  "close": [float("nan")], "volume": [0]}, index=[today])
+        today_row = pd.DataFrame(
+            {
+                "open": [q["openPrice"]],
+                "high": [float("nan")],
+                "low": [float("nan")],
+                "close": [float("nan")],
+                "volume": [0],
+            },
+            index=[today],
+        )
         bars[s] = pd.concat([bars[s], today_row])
         last[s] = float(q["lastPrice"])
 

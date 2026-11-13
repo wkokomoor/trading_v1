@@ -28,8 +28,17 @@ class FakeSchwab:
     def price_history(self, symbol, startDate, endDate, **_):
         days = sessions(startDate.date(), endDate.date())
         px = self.prev_spy_open if symbol == "SPY" else 10.0
-        candles = [{"datetime": int(dt.datetime.combine(d, dt.time(0), ET).timestamp() * 1000),
-                    "open": px, "high": px, "low": px, "close": px, "volume": 1} for d in days]
+        candles = [
+            {
+                "datetime": int(dt.datetime.combine(d, dt.time(0), ET).timestamp() * 1000),
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "volume": 1,
+            }
+            for d in days
+        ]
         return Resp({"candles": candles})
 
     def quotes(self, symbols):
@@ -39,13 +48,20 @@ class FakeSchwab:
         return Resp([{"hashValue": "abc"}])
 
     def account_details(self, account_hash, fields=None):
-        return Resp({"securitiesAccount": {
-            "currentBalances": {"cashBalance": 5.0},
-            "positions": [
-                {"instrument": {"symbol": "SPXU"}, "longQuantity": 50.0},
-                {"instrument": {"symbol": "AAPL"}, "longQuantity": 3.0},  # ignored: not the strategy's
-            ],
-        }})
+        return Resp(
+            {
+                "securitiesAccount": {
+                    "currentBalances": {"cashBalance": 5.0},
+                    "positions": [
+                        {"instrument": {"symbol": "SPXU"}, "longQuantity": 50.0},
+                        {
+                            "instrument": {"symbol": "AAPL"},
+                            "longQuantity": 3.0,
+                        },  # ignored: not the strategy's
+                    ],
+                }
+            }
+        )
 
     def place_order(self, *a, **k):  # must never be called
         self.placed.append(a)

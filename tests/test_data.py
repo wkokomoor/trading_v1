@@ -1,9 +1,8 @@
 import datetime as dt
 
-import pandas as pd
-
 from conftest import make_bars
-from trading.data import CachedSource, ET, last_complete_session, sessions
+
+from trading.data import ET, CachedSource, last_complete_session, sessions
 
 
 class CountingSource:
@@ -37,7 +36,7 @@ def test_cache_refetches_union_when_range_grows(tmp_path):
 
 
 def test_last_complete_session_excludes_open_session():
-    during = dt.datetime(2025, 3, 12, 11, 0, tzinfo=ET)   # Wednesday, market open
+    during = dt.datetime(2025, 3, 12, 11, 0, tzinfo=ET)  # Wednesday, market open
     after = dt.datetime(2025, 3, 12, 16, 30, tzinfo=ET)
     weekend = dt.datetime(2025, 3, 15, 12, 0, tzinfo=ET)  # Saturday
     assert last_complete_session(during) == dt.date(2025, 3, 11)

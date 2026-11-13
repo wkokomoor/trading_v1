@@ -1,0 +1,56 @@
+[project]
+name = "trading-v1"
+version = "0.1.0"
+description = "Daily trading strategy backtester with a Schwab dry run"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "pandas_market_calendars>=5.0",
+    "yfinance>=0.2.50",
+    "matplotlib>=3.8",
+    "schwabdev>=4.0,<5",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+trading = "trading.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.15",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["trading", "strategies"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # modern syntax
+    "B",   # likely bugs
+    "SIM", # simplifications
+]
+ignore = [
+    "SIM108", # if/else blocks are often clearer than nested ternaries in strategy logic
+    "SIM112", # Schwab .env keys are lowercase (app_key); revisit with config.py in Phase B
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trading", "strategies"]

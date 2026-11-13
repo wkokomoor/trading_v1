@@ -107,7 +107,8 @@ def parse_params(cls: type[Strategy], pairs: list[str]) -> dict:
 
 def _strategy_in_module(module) -> type[Strategy]:
     found = [
-        obj for _, obj in inspect.getmembers(module, inspect.isclass)
+        obj
+        for _, obj in inspect.getmembers(module, inspect.isclass)
         if issubclass(obj, Strategy) and obj is not Strategy and obj.__module__ == module.__name__
     ]
     if len(found) != 1:
@@ -132,4 +133,5 @@ def load_strategy(name_or_path: str) -> type[Strategy]:
 
 def available_strategies() -> list[str]:
     import strategies
+
     return sorted(m.name for m in pkgutil.iter_modules(strategies.__path__) if not m.name.startswith("_"))

@@ -96,10 +96,16 @@ class SimBroker:
                 self.positions[o.symbol] = held + o.qty
             else:
                 raise ValueError(f"unknown side {o.side!r}")
-            self.trades.append({
-                "date": when, "symbol": o.symbol, "side": o.side,
-                "qty": signed_qty, "price": fill, "value": o.qty * fill,
-            })
+            self.trades.append(
+                {
+                    "date": when,
+                    "symbol": o.symbol,
+                    "side": o.side,
+                    "qty": signed_qty,
+                    "price": fill,
+                    "value": o.qty * fill,
+                }
+            )
 
     def equity(self, prices: dict[str, float]) -> float:
         return self.cash + sum(q * prices[s] for s, q in self.positions.items())
@@ -108,6 +114,7 @@ class SimBroker:
 # --------------------------------------------------------------------------- #
 # Metrics
 # --------------------------------------------------------------------------- #
+
 
 def max_drawdown(equity: pd.Series) -> float:
     return float((equity / equity.cummax() - 1).min())
@@ -153,6 +160,7 @@ class BacktestResult:
 # --------------------------------------------------------------------------- #
 # Backtest loop
 # --------------------------------------------------------------------------- #
+
 
 def run_backtest(
     strategy: Strategy,
@@ -200,15 +208,17 @@ def run_backtest(
             last_weights = dict(weights)
 
         closes = {s: float(bars[s].at[day, "close"]) for s in broker.positions}
-        rows.append({
-            "date": day,
-            **strategy.info,
-            "target": _fmt_weights(weights),
-            "orders": "; ".join(f"{o.side} {o.qty} {o.symbol}" for o in orders),
-            "holding": ",".join(sorted(broker.positions)) or "CASH",
-            "cash": broker.cash,
-            "equity": broker.equity(closes),
-        })
+        rows.append(
+            {
+                "date": day,
+                **strategy.info,
+                "target": _fmt_weights(weights),
+                "orders": "; ".join(f"{o.side} {o.qty} {o.symbol}" for o in orders),
+                "holding": ",".join(sorted(broker.positions)) or "CASH",
+                "cash": broker.cash,
+                "equity": broker.equity(closes),
+            }
+        )
 
     if warmup:
         log.info("%s: skipped %d warm-up days (lookback=%d)", strategy.name, warmup, lookback)
@@ -235,6 +245,7 @@ SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]  # fixed categorica
 def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
     """Equity curves on one log-scale axis, legend plus end-of-line labels."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.ticker import FuncFormatter
@@ -242,12 +253,19 @@ def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
     fig.patch.set_facecolor("#fcfcfb")
     ax.set_facecolor("#fcfcfb")
-    for (label, res), color in zip(results.items(), SERIES_COLORS):
+    for (label, res), color in zip(results.items(), SERIES_COLORS, strict=False):
         eq = res.daily["equity"]
         x = pd.to_datetime(eq.index)
         ax.plot(x, eq.values, color=color, linewidth=2, label=label)
-        ax.annotate(f"{label}  ${eq.iloc[-1]:,.0f}", (x[-1], eq.iloc[-1]), xytext=(6, 0),
-                    textcoords="offset points", va="center", fontsize=9, color="#0b0b0b")
+        ax.annotate(
+            f"{label}  ${eq.iloc[-1]:,.0f}",
+            (x[-1], eq.iloc[-1]),
+            xytext=(6, 0),
+            textcoords="offset points",
+            va="center",
+            fontsize=9,
+            color="#0b0b0b",
+        )
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
     ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)

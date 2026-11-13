@@ -4,24 +4,28 @@ A backtesting framework for daily trading strategies, where each strategy lives 
 
 ## Setup
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) and pinned in `uv.lock`, so your machine, CI and the cloud all install identical versions.
+
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+brew install uv        # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync                # creates .venv with exact locked versions (Python 3.13)
 cp .env.example .env   # only needed for Schwab: add your app key/secret
 ```
+
+To add a dependency, run `uv add <package>` (or `uv add --dev <package>`). This updates both `pyproject.toml` and `uv.lock`; commit both.
 
 ## Usage
 
 ```sh
-.venv/bin/python -m trading list                                # strategies and their params
+uv run trading list                                   # strategies and their params
 
-.venv/bin/python -m trading backtest -s spy_vix                 # 2010 to now vs. buy-and-hold SPY
-.venv/bin/python -m trading backtest -s spy_vix -p short=       # long-only variant
-.venv/bin/python -m trading backtest -s spy_vix -p vix_high=25 --slippage-bps 5 --start 2018-01-01
-.venv/bin/python -m trading backtest -s sma_trend --benchmark-param symbol=UPRO
-.venv/bin/python -m trading backtest -s spy_vix --plot results/equity.png --out results/ -v
+uv run trading backtest -s spy_vix                    # 2010 to now vs. buy-and-hold SPY
+uv run trading backtest -s spy_vix -p short=          # long-only variant
+uv run trading backtest -s spy_vix -p vix_high=25 --slippage-bps 5 --start 2018-01-01
+uv run trading backtest -s sma_trend --benchmark-param symbol=UPRO
+uv run trading backtest -s spy_vix --plot results/equity.png --out results/ -v
 
-.venv/bin/python -m trading dry-run -s spy_vix                  # today's orders, NOT sent
+uv run trading dry-run -s spy_vix                     # today's orders, NOT sent
 ```
 
 Backtests print a side-by-side summary of the strategy against the benchmark: total return, CAGR, volatility, Sharpe, max drawdown, trade count and time in market. `-v` prints every day and every trade, `--out` saves CSVs, and `--plot` saves an equity-curve chart.
@@ -44,15 +48,15 @@ from trading.strategy import MarketView, Strategy
 
 
 class Momentum(Strategy):
-    name = "momentum"                      # must match the filename for `-s momentum`
-    symbols = ("SPY", "UPRO")              # every symbol you read or trade
-    params = {"window": 50}                # defaults; override with -p window=20
-    lookback = 50                          # completed bars needed before the first decision
+    name = "momentum"  # must match the filename for `-s momentum`
+    symbols = ("SPY", "UPRO")  # every symbol you read or trade
+    params = {"window": 50}  # defaults; override with -p window=20
+    lookback = 50  # completed bars needed before the first decision
 
     def on_open(self, view: MarketView):
-        closes = view.history("SPY", self.p.window)["close"]   # completed bars before today
-        today = view.open("SPY")                                 # today's open
-        self.info = {"sma": closes.mean()}                       # optional: shows up in -v output
+        closes = view.history("SPY", self.p.window)["close"]  # completed bars before today
+        today = view.open("SPY")  # today's open
+        self.info = {"sma": closes.mean()}  # optional: shows up in -v output
         return {"UPRO": 1.0} if today > closes.mean() else {}
 ```
 
@@ -79,11 +83,15 @@ When `symbols` or `lookback` depend on params, override `required_symbols()` or 
 | `sma_trend` | Hold UPRO while SPY is above its 200-day average, otherwise cash. |
 | `buy_and_hold` | Hold one symbol. This is the default benchmark. |
 
-## Tests
+## Tests and checks
 
 ```sh
-.venv/bin/python -m pytest
+uv run pytest              # tests
+uv run ruff check .        # lint
+uv run ruff format .       # auto-format
 ```
+
+GitHub Actions runs all three on every push and pull request (`.github/workflows/ci.yml`).
 
 ## Roadmap
 

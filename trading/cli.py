@@ -1,10 +1,10 @@
 """Command line: list strategies, backtest one against a benchmark, or dry-run it live.
 
-    python -m trading list
-    python -m trading backtest -s spy_vix --start 2010-01-01 --plot equity.png
-    python -m trading backtest -s spy_vix -p vix_high=25 -p spy_low=-0.01 --slippage-bps 5
-    python -m trading backtest -s path/to/my_strategy.py
-    python -m trading dry-run -s spy_vix
+python -m trading list
+python -m trading backtest -s spy_vix --start 2010-01-01 --plot equity.png
+python -m trading backtest -s spy_vix -p vix_high=25 -p spy_low=-0.01 --slippage-bps 5
+python -m trading backtest -s path/to/my_strategy.py
+python -m trading dry-run -s spy_vix
 """
 
 from __future__ import annotations
@@ -64,8 +64,9 @@ def cmd_backtest(args) -> None:
     if result.daily.empty:
         raise SystemExit("no days simulated (not enough data after warm-up?)")
     # Benchmark over exactly the days the strategy traded, for a fair comparison.
-    bench = run_backtest(benchmark, bars, result.daily.index[0], result.daily.index[-1],
-                         args.cash, args.slippage_bps)
+    bench = run_backtest(
+        benchmark, bars, result.daily.index[0], result.daily.index[-1], args.cash, args.slippage_bps
+    )
 
     if args.verbose:
         with pd.option_context("display.width", 200, "display.max_columns", 20, "display.max_rows", 60):
@@ -90,8 +91,11 @@ PCT_KEYS = {"total_return", "cagr", "volatility", "max_drawdown", "time_in_marke
 def print_summary(summaries: dict[str, dict]) -> None:
     table = pd.DataFrame(summaries)
     for key in table.index:
-        fmt = (lambda v: f"{v:.2%}") if key in PCT_KEYS else (
-            (lambda v: f"{v:.2f}") if key == "sharpe" else str)
+        fmt = (
+            (lambda v: f"{v:.2%}")
+            if key in PCT_KEYS
+            else ((lambda v: f"{v:.2f}") if key == "sharpe" else str)
+        )
         table.loc[key] = [fmt(v) for v in table.loc[key]]
     with pd.option_context("display.width", 200, "display.max_colwidth", 80):
         print(table.to_string())
@@ -104,16 +108,23 @@ def cmd_dry_run(args) -> None:
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="python -m trading", description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        prog="python -m trading", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="show available strategies and their params")
 
     def strategy_args(sp):
         sp.add_argument("-s", "--strategy", required=True, help="strategy name or path to a .py file")
-        sp.add_argument("-p", "--param", action="append", default=[], metavar="KEY=VALUE",
-                        help="override a strategy param (repeatable)")
+        sp.add_argument(
+            "-p",
+            "--param",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="override a strategy param (repeatable)",
+        )
         sp.add_argument("-v", "--verbose", action="store_true")
 
     bt = sub.add_parser("backtest", help="simulate a strategy on daily bars")
@@ -137,6 +148,8 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> None:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
-                        format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
     {"list": cmd_list, "backtest": cmd_backtest, "dry-run": cmd_dry_run}[args.command](args)

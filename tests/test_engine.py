@@ -1,9 +1,7 @@
-import datetime as dt
-
 import pandas as pd
 import pytest
-
 from conftest import make_bars
+
 from trading.engine import Order, SimBroker, performance, rebalance_orders, run_backtest
 from trading.strategy import MarketView, Strategy
 
@@ -11,6 +9,7 @@ PRICES = {"UPRO": 50.0, "SPXU": 20.0}
 
 
 # ---------------------------------------------------------------- rebalance
+
 
 def test_rebalance_from_cash():
     assert rebalance_orders({"UPRO": 1.0}, {}, 1000, PRICES) == [Order("UPRO", "BUY", 20, 50.0)]
@@ -47,6 +46,7 @@ def test_rebalance_rejects_short_or_leverage(weights):
 
 # ---------------------------------------------------------------- broker
 
+
 def test_broker_round_trip_and_signed_trade_log():
     b = SimBroker(cash=1000)
     b.execute([Order("UPRO", "BUY", 20, 50.0)], "d1")
@@ -65,6 +65,7 @@ def test_broker_rejects_overspend_and_oversell():
 
 # ---------------------------------------------------------------- market view
 
+
 def test_market_view_hides_the_future(march_2025):
     bars = {"X": make_bars(march_2025, list(range(10)))}
     view = MarketView(bars, march_2025[4])
@@ -75,8 +76,10 @@ def test_market_view_hides_the_future(march_2025):
 
 # ---------------------------------------------------------------- backtest loop
 
+
 class Alternate(Strategy):
     """Long A on even days, cash on odd days, hold on every third day."""
+
     name = "alternate"
     symbols = ("A",)
 
@@ -122,6 +125,7 @@ def test_backtest_uses_only_dates_all_symbols_share(march_2025):
 
 
 # ---------------------------------------------------------------- metrics
+
 
 def test_performance_metrics():
     eq = pd.Series([110.0, 99.0, 121.0])
