@@ -41,6 +41,14 @@ What this shows:
 2. **Drawdowns stay brutal at realistic accuracy.** At 54%, the median long / short indicator still suffers a −78% max drawdown, and long / cash −56%. Even a genuinely good daily indicator, on 3x leverage, means riding deep losses.
 3. **Daily direction indicators are rarely that good.** Sustained balanced accuracy of 53–55% for next-day S&P direction would be an exceptional result. Most published daily signals fall well short of it once costs are included, so treat any backtest claiming it with suspicion.
 
+### Verdict: VIX fails as a direction indicator (closed)
+
+> **Decision (2026-11-13):** VIX is rejected as the direction indicator for this strategy, and this line of research is closed.
+> - **As a direction call:** no VIX rule tested, including the original, beat a coin flip at predicting the next day's direction.
+> - **As a stay-in-or-cash filter:** it also lost to the simpler alternative. "Long UPRO only while VIX < 20" earned 11.8% (train) and 3.6% (test) a year, while "long only while SPY's own 20-day realized volatility < 20%" earned 29.1% and 21.6% (Part 3).
+>
+> VIX remains available as a sizing input (Part 2), but there's no evidence it beats realized volatility there either.
+
 ### Is VIX the right indicator? Measured: no, not for direction.
 
 | Indicator (call "up" when...) | Balanced accuracy |
@@ -172,3 +180,55 @@ uv run trading backtest -s spy_vix --start 2010-04-13 --slippage-bps 5
 uv run trading backtest -s buy_and_hold --start 2010-04-13 --slippage-bps 5
 uv run trading runs show <ids> --plot docs/img/candidate_vs_original.png
 ```
+
+---
+
+## Part 3: Traditional timing indicators (screen, 2026-11-13)
+
+**The question:** are there standard indicators for long/cash strategies that do better than VIX?
+
+Each indicator below was run unchanged, with textbook parameters and **no tuning**, as a long-UPRO-or-cash rule. It decides at the open using only yesterday's close and earlier, and holds until the next open, with 5 bps slippage. Train is Apr 2010 – 2019; test is 2020 – Nov 2026. Reproduce with `uv run python research/screen_indicators.py`.
+
+| Long UPRO when..., else cash | Balanced acc. (train / test) | CAGR train | CAGR test | Max DD train | Max DD test | Sharpe test | Switches/yr |
+|---|---|---|---|---|---|---|---|
+| *hold SPY (reference)* | | 13.0% | 14.7% | −20% | −32% | 0.82 | 0 |
+| *always long UPRO (baseline)* | 50.0 / 50.0% | 31.3% | 22.7% | −55% | −75% | 0.65 | 0 |
+| **Trend following** | | | | | | | |
+| price > 200-day SMA (Faber 2007) | 49.6 / 51.2% | 13.8% | 20.9% | −59% | −51% | 0.68 | 5 |
+| price > 200-day SMA, ±2% band | 50.1 / 50.9% | 19.5% | 19.6% | −47% | −54% | 0.65 | 2 |
+| price > 100-day SMA | 50.1 / 51.8% | 15.7% | 27.6% | −47% | −46% | 0.83 | 10 |
+| price > 50-day SMA | 49.7 / 51.3% | 6.0% | 14.5% | −54% | −50% | 0.55 | 17 |
+| 50-day SMA > 200-day ("golden cross") | 50.5 / 50.4% | 16.2% | 10.5% | −49% | −75% | 0.45 | 1 |
+| 12-month momentum > 0 (time-series momentum) | 49.7 / 51.5% | 21.7% | 14.9% | −55% | −68% | 0.54 | 4 |
+| MACD above its signal line | 50.2 / 48.5% | 11.1% | 10.0% | −40% | −43% | 0.45 | 22 |
+| **Volatility regime** | | | | | | | |
+| **20-day realized vol < 20%** | 50.7 / 50.6% | **29.1%** | **21.6%** | **−36%** | **−38%** | 0.71 | 5 |
+| 20-day realized vol < 15% | 50.4 / 49.6% | 14.5% | 14.9% | −37% | −29% | 0.63 | 6 |
+| 20-day realized vol < 25% | 50.3 / 50.9% | 27.6% | 26.9% | −51% | −46% | 0.77 | 2 |
+| VIX open < 20 | 50.7 / 50.3% | 11.8% | 3.6% | −48% | −38% | 0.27 | 15 |
+| VIX open < 25 | 50.5 / 49.8% | 27.8% | 13.3% | −51% | −55% | 0.53 | 9 |
+| **Short-term mean reversion** | | | | | | | |
+| yesterday was a down day | 49.7 / 49.8% | 3.1% | 14.6% | −52% | −61% | 0.53 | 127 |
+| RSI(2) < 30 (Connors-style oversold) | 49.7 / 51.2% | 5.0% | 26.1% | −50% | −42% | 0.81 | 63 |
+| RSI(2) < 30 and price > 200-day SMA | 50.0 / 51.7% | 0.4% | 18.0% | −40% | −37% | 0.86 | 52 |
+| **Calendar** | | | | | | | |
+| turn of the month (last day + first 3) | 49.3 / 50.6% | 0.0% | 15.1% | −44% | −29% | 0.70 | 24 |
+
+### Findings
+
+1. **No traditional indicator predicts daily direction either.** Every one scores 48.5–51.8% balanced accuracy, below the roughly 52–53% the oracle test says is needed. This is consistent with markets being close to unpredictable day to day.
+2. **Their value is avoiding the worst periods, not calling direction.** A trend or volatility filter is wrong about as often as it's right on ordinary days. Its benefit comes from being out of the market during the few violent stretches (2011, 2015–16, 2018, 2020, 2022) that cause most of a 3x fund's drawdown. Balanced accuracy can't see this, so judge these filters by drawdown and consistency.
+3. **Realized volatility < 20% is the standout because it was consistent.** It kept roughly 93% of UPRO's training return and 95% of its test return, while cutting max drawdown from −55% to −36% (train) and −75% to −38% (test). The nearby thresholds (15%, 25%) behave sensibly too, so the result isn't a fluke of one number. This matches the research on volatility-managed portfolios (Moreira & Muir 2017): volatility clusters, and high-volatility periods have poor risk-adjusted returns, worst of all with daily-reset leverage.
+4. **Some popular indicators did badly here.** The golden cross, MACD and 12-month momentum were either too slow (they exited after the damage and re-entered late) or too noisy. Their test drawdowns (−68% to −75%) were close to simply holding UPRO (−75%), so they gave little protection when it mattered.
+5. **Big jumps between train and test usually mean luck, not edge.** RSI(2), "yesterday was a down day" and the 100-day SMA jump from weak train results to strong test results. That's what a period-specific fluke looks like, so don't select them on the test numbers.
+6. **Still nothing beats SPY's Sharpe consistently.** The best leveraged filters reach about SPY's Sharpe (0.7–0.8) at roughly 1.5–2x SPY's return, with deeper (but survivable) drawdowns.
+
+### Recommended next step
+
+Build a `vol_filter` strategy: long UPRO while SPY's 20-day realized volatility is below a threshold, else cash, optionally combined with a slow trend filter. Then put it through the same process as everything else:
+
+1. `sweep` the threshold and window on 2010–2019 only;
+2. check the result on 2020+;
+3. run a walk-forward test before it goes anywhere near shadow trading.
+
+Also credit interest on cash. These filters sit in cash for 10–35% of days, so they're currently understated.
