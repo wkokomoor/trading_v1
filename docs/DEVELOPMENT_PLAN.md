@@ -228,14 +228,14 @@ Each phase ends in something usable. Phases B and C can run in parallel.
 
 ### Phase B: PostgreSQL persistence (2–3 days)
 
-- [ ] `deploy/docker-compose.yml` with Postgres 16 for local development.
-- [ ] `trading/config.py`: settings from environment variables (`DATABASE_URL`, etc.).
-- [ ] SQLAlchemy models plus Alembic migrations for the schema above. Use `psycopg` 3 as the driver.
-- [ ] `BarStore` interface with `PostgresStore` (default when `DATABASE_URL` is set) and `CsvStore` (tests and offline use).
-- [ ] Save every backtest to `backtest_runs` / `backtest_daily` / `backtest_trades`.
-- [ ] `python -m trading runs` lists and compares saved runs.
-- [ ] One-time import of the existing `.cache/` CSVs.
-- [ ] Integration tests against a throwaway Postgres (testcontainers or a CI service container).
+- [x] `deploy/docker-compose.yml` with Postgres 16 for local development (`trading` + `trading_test` databases).
+- [x] `trading/config.py`: settings from environment variables (`DATABASE_URL`, `SCHWAB_*`; the old lowercase keys still work).
+- [x] SQLAlchemy Core tables plus Alembic migrations, with `psycopg` 3 as the driver. `trading db upgrade|status`. Live-trading tables (`live_runs`, `orders`, `account_snapshots`) come with Phase D.
+- [x] `BarStore` base with `PostgresStore` (default when `DATABASE_URL` is set) and `CsvStore` (tests and offline use).
+- [x] Every backtest saved to `backtest_runs` / `backtest_daily` / `backtest_trades`, with the git commit, params and both equity curves.
+- [x] `trading runs list|show` lists and compares saved runs, and `--plot` overlays their equity curves.
+- [x] `trading db import-csv` for the one-time import of `.cache/`.
+- [x] Integration tests against a real Postgres: local Docker, and a CI service container where they're required (never skipped). Includes a test that fails if `models.py` and the migrations drift apart.
 
 ### Phase C: Research gate (ongoing, start now)
 
