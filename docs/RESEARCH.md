@@ -403,3 +403,77 @@ Historical option chains (and so true historical 0-DTE straddle prices) aren't f
 - SqueezeMetrics' GEX is a **model estimate**: dealer positioning is inferred from open interest under assumptions about who is long or short. It isn't directly observed. The history was downloaded today, and I can't verify whether past values were ever revised.
 - VIX1D covers only 3.5 years. 0-DTE trading has grown so much since 2022 that pre-2022 behavior may not represent today's market.
 - **The way to test the real thing:** the Schwab API's `option_chains` endpoint gives live chains. A daily collector job (Phase D) could snapshot SPY's 0-DTE chain at the open, compute the ATM straddle and our own GEX estimate, and store them in Postgres. After 6–12 months there'd be first-hand data to test these ideas directly, rather than through proxies.
+
+---
+
+## Part 7: Random-forest direction model, VIX features (2026-11-13)
+
+**The idea:** compute a set of indicators, feed them to a random forest classifier, use its confidence P(SPY up until tomorrow's open) as the signal, and hold UPRO only when that confidence clears a threshold. The intended indicators are VIX, NYSE ADD (advance/decline) and NYSE TICK.
+
+- Strategy: `strategies/rf_direction.py`
+- Features and training: `trading/ml.py`
+- Evaluation: `uv run python research/rf_direction.py`
+
+### Data: only VIX is available for free
+
+| Indicator | Free daily history | Status |
+|---|---|---|
+| VIX | 1990 → (Yahoo) | Used |
+| NYSE ADD | Unicorn Research daily A/D files, **but that site stopped updating in Feb 2020**, which leaves no test period | Not used; needs Schwab `$ADD` or a paid feed |
+| NYSE TICK | None | Not used; needs Schwab `$TICK` (short intraday history) or paid intraday data |
+
+The feature code already supports `ADD` and `TICK` when a data source provides them (`-p internals=ADD,TICK`). A leakage test covers them too.
+
+**Data-quality finding:** Yahoo's VIX *opens* for 2008–2009 are mostly stale. About 30% equal the prior close, and the median overnight gap is about 0.2%, versus about 2% in every other year. Open-based VIX features are masked for those two years, and those rows are excluded from training.
+
+### Model and features
+
+**Model:** a deliberately regularized random forest: 300 trees, max depth 4, at least 50 samples per leaf. It is **retrained every January on all prior data from 1996**, so every prediction is out of sample. That gives about 3,000 training rows for 2010, growing to about 7,100 for 2026.
+
+**Features** (15 in total), all known at the open:
+- **VIX:** level at the open; morning gap versus the prior close (a spike or drop); 1- and 5-day change; distance from its 20-day average.
+- **VIX/SPY divergence:** the VIX move beyond what SPY's move implies, using a rolling 120-day beta, for both the morning gap and the prior day ("SPY flat but VIX rising").
+- **SPY context:** gap; 1-, 5- and 20-day returns; distance from the 200-day average; 20-day realized volatility; prior day's range.
+
+### Results (out of sample, 2010–2026)
+
+| | 2010–2019 | 2020–2026 |
+|---|---|---|
+| AUC (0.50 = no skill) | 0.503 (90% CI 0.485–0.522) | 0.500 (0.479–0.521) |
+| AUC of the same model trained on **shuffled** labels | 0.497 | 0.492 |
+| Balanced accuracy at P ≥ 0.5 | 50.8% | 50.4% |
+
+**The confidence score has no information.** SPY's actual up-rate is flat across the model's confidence levels:
+
+| Model's P(up), quintile | Avg. predicted | Actually up |
+|---|---|---|
+| lowest | 50.1% | 54.9% |
+| 2 | 53.3% | 56.8% |
+| 3 | 54.9% | 56.2% |
+| 4 | 56.3% | 56.5% |
+| highest | 58.9% | 55.3% |
+
+**Higher thresholds make it worse** (long UPRO when P ≥ threshold, else cash; 5 bps):
+
+| Rule | CAGR 2010–19 | CAGR 2020–26 | Max DD 2020–26 | Sharpe 2020–26 |
+|---|---|---|---|---|
+| always long UPRO | 32.7% | 22.7% | −75% | 0.65 |
+| `vol_filter` | 28.9% | 21.6% | −38% | 0.71 |
+| P ≥ 0.50 (in market about 93% of days) | 32.8% | 19.6% | −75% | 0.60 |
+| P ≥ 0.55 | 6.5% | 3.4% | −74% | 0.31 |
+| P ≥ 0.58 | −1.7% | −6.9% | −69% | −0.03 |
+
+**Permutation importance on out-of-sample years:** shuffling any single feature changed AUC by at most 0.005. The top three were the VIX morning gap, SPY's 5-day return and the VIX/SPY gap divergence, each helping in only 10–11 of 17 years. That's indistinguishable from noise.
+
+### Verdict
+
+With VIX (and SPY) features, the random forest is **a coin flip, the same as every single indicator before it**. Combining weak indicators in a nonlinear model didn't create an edge, because none of them carries next-day direction information to begin with. The confidence score must not be used as an entry signal in this form.
+
+### What could still change the answer: market internals, at the right time
+
+The ADD and TICK ideas are *intraday* signals: breadth failing to confirm a rally, TICK not confirming SPY's new high of the day. At the **open**, today's internals don't exist yet. Only yesterday's end-of-day values do, and that's a much weaker version of the idea. Testing it properly means one of two things:
+
+1. **Prior-day internals at the open** (no strategy change). Needs daily `$ADD` / `$TICK` history for 2010+. Run `trading feasibility --measure rf_direction:internals=ADD,TICK` once a source exists.
+2. **Decide later in the morning** (for example 10:00 ET, after the opening divergences have formed), then hold until the next open, which is still not a day trade. This needs **intraday** ADD, TICK, VIX and SPY history, and the backtester would need an intraday decision time. That's a bigger change, and the paid data is unavoidable.
+
+Either way, apply the same bar: out-of-sample AUC clearly above 0.52, confidence that actually rises with outcomes, and a better result than `vol_filter`, before anything goes to shadow trading.

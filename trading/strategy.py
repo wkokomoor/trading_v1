@@ -79,6 +79,11 @@ class Strategy:
         """Completed bars needed before the first decision. Override when param-dependent."""
         return self.lookback
 
+    def required_history(self) -> int:
+        """Trading days of data to load before --start (default: the lookback). Models that
+        train on past data override this to get a longer training history."""
+        return self.required_lookback()
+
     def on_open(self, view: MarketView) -> Weights | None:
         raise NotImplementedError
 

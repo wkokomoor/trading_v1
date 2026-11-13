@@ -273,6 +273,7 @@ This decides whether anything goes live.
 - [ ] Job entry points: `python -m trading job trade|reconcile|ingest`.
 - [ ] Token storage plus the `auth` command (see the Schwab token lifecycle section).
 - [ ] Tests for every job against the fake Schwab client and a Postgres container.
+- [ ] **Market-internals collector:** extend the collector to save `$ADD`, `$TICK` and `$VIX` quotes several times a day (open, 10:00 and the close) to build first-hand internals history for `rf_direction`.
 - [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and it gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
 
 ### Phase E: GCP deployment (2–3 days)

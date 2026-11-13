@@ -75,7 +75,7 @@ def cmd_list(_args) -> None:
 
 def load_market(args, strategies, end: dt.date, want_db: bool = False, extra_symbols=()):
     """Bars for every symbol the given strategies need, plus the DB engine if one is in use."""
-    lookback = max([s.required_lookback() for s in strategies] or [1])
+    lookback = max([s.required_history() for s in strategies] or [1])
     fetch_start = args.start - dt.timedelta(days=math.ceil(lookback * 1.6) + 15)
     if getattr(args, "cash_rate", "0") == "tbill":
         extra_symbols = (*extra_symbols, "IRX")
