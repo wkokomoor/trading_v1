@@ -72,6 +72,22 @@ When `DATABASE_URL` is set, every backtest is saved as a numbered run. A run sto
 - Trades only happen when the strategy's target changes. Share counts are whole numbers and cash never goes negative.
 - The benchmark is run over exactly the same days as the strategy.
 
+## Shadow trading (paper trading)
+
+A **shadow portfolio** runs a strategy on live Schwab data every morning and records the orders it would place, filled at live bid/ask prices. **No orders are sent to Schwab.** Schwab has no paper-trading API, so this is how a strategy is proven before real money.
+
+```sh
+uv run trading schwab auth                                       # weekly: Schwab login (in a terminal)
+uv run trading portfolio create shadow-vol -s vol_filter --allocation 10000
+uv run trading job trade          # each trading day after 09:31 ET: decide, risk-check, simulate fills
+uv run trading job ingest         # after 16:15 ET: refresh daily bars
+uv run trading job reconcile      # then: mark shadow portfolios at the close
+uv run trading portfolio show shadow-vol                         # state, daily runs, orders
+uv run trading kill-switch on --reason "..."                     # block all trading (or TRADING_KILL_SWITCH=1)
+```
+
+`job trade` is safe to re-run: each portfolio trades at most once per day, and on weekends, holidays or before the open it exits as "skipped". Every order passes the risk checks in `trading/risk.py` first: the kill switch, data sanity, the strategy's symbol list, a daily loss limit and the allocation cap.
+
 ## Writing a strategy
 
 Add a file to `strategies/`. It will appear in `list` and you can run it with `-s <name>`. You can also pass any file path with `-s path/to/file.py`.
