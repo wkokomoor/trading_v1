@@ -329,3 +329,77 @@ Known risks to watch in shadow trading:
 - **Gap risk.** A crash that arrives without warning, while volatility is still low (for example February 2018 or February 2020), hits a full 3x position before the filter reacts. Most of this strategy's −38% max drawdown comes from moments like these.
 - **Whipsaws.** About 4–5 trades a year (74 over Apr 2010 – Nov 2026), so costs are small, but each switch happens on a volatile day. Real fills will show whether 5 bps per trade was realistic.
 - **This rests on one main historical path (2010–2026).** A long, grinding bear market with *low* volatility (rare, but possible) would be its weak spot.
+
+---
+
+## Part 6: Options-market indicators, gamma exposure and expected move (2026-11-13)
+
+**The hypothesis:** SPY's options market is so large that it drives the underlying.
+- **Expected move:** the price of 0-DTE ATM straddles shows the range the market expects for the day.
+- **Gamma exposure (GEX):** dealer hedging is positive (buy dips, sell rips → calm, mean-reverting markets) or negative (sell into weakness → trend days and sell-offs).
+
+Reproduce with `uv run python research/options_indicators.py`.
+
+### Data, and the limits of free data
+
+Historical option chains (and so true historical 0-DTE straddle prices) aren't freely available; Yahoo and the Schwab API return only *current* chains. The tests use the best free proxies:
+
+| Concept | Proxy used | History |
+|---|---|---|
+| GEX | SqueezeMetrics' published daily S&P 500 GEX estimate (end of day; day t−1 is used at day t's open) | May 2011 → |
+| 0-DTE expected move | Cboe **VIX1D** (1-day implied vol from SPX options): EM = SPY × VIX1D / 100 / √252. An ATM straddle costs about 0.8 × EM. | Apr 2023 → |
+| Short-horizon expected move | Cboe **VIX9D** (9-day implied vol), same formula | 2011 → |
+
+### A. GEX: the volatility part of the claim holds; the direction part doesn't
+
+| Yesterday's GEX | Days (train / test) | Next-day avg \|move\| | Intraday range | Worst 5% day | Next-day avg return | Reversal corr. |
+|---|---|---|---|---|---|---|
+| **Negative**, train 2011–19 | 155 | 1.29% | 2.03% | −2.40% | +0.22% (t = 1.7) | −0.07 |
+| Positive, train | 2,026 | 0.57% | 0.91% | −1.29% | +0.04% (t = 2.2) | 0.00 |
+| **Negative**, test 2020–26 | 193 | 1.61% | 2.56% | −3.26% | +0.08% (t = 0.5) | −0.11 |
+| Positive, test | 1,532 | 0.72% | 1.10% | −1.70% | +0.06% (t = 2.4) | −0.07 |
+
+"Reversal corr." is the correlation between yesterday's move and today's open→close move. Negative means mean reversion; positive means trending.
+
+1. **Confirmed: GEX forecasts the *size* of moves, strongly and consistently.** After negative-GEX days, the next day's moves were about 2.2x larger and the worst days roughly 2x worse, in both periods. Across GEX quintiles the effect is close to monotonic (train next-day |move|: 1.10% → 0.67% → 0.51% → 0.46% → 0.36%). GEX also adds information beyond realized volatility: even in calm markets (20-day realized vol < 20%), negative-GEX days moved 1.05% on average vs 0.57%.
+2. **Not supported: negative GEX → sell-offs.** Average next-day returns after negative GEX were *positive* (+0.22% train, +0.08% test). Bigger moves came in both directions, with sharp rebounds as common as continued selling. No direction call can be made from it.
+3. **Not supported: negative GEX → trend days, positive GEX → mean reversion.** If anything it's the reverse: negative-GEX days showed slightly *more* reversal (−0.07 / −0.11), and positive-GEX days were neutral (0.00 / −0.07). The effects are small either way.
+
+### B. Expected move: the market over-prices the range, and breakouts don't predict direction
+
+| | Days | Avg expected move | Session (open→close) inside ±EM | Fair 1σ would be |
+|---|---|---|---|---|
+| VIX1D (0-DTE proxy), 2023–26 | 893 | 0.70% | **75%** | 68% |
+| VIX9D, 2011–26 | 3,906 | 1.12% | 90% | 68% |
+
+- Options consistently price a **wider** range than actually happens: the median realized move was 0.61x the VIX1D expected move. This is the well-known volatility risk premium, the reason option sellers earn money on average. As a *risk estimate* the expected move is conservative, which is fine; as a direction signal it says nothing by construction, because a straddle is symmetric.
+- **Breakouts:** after the session closed beyond ±EM, the next day's average return was statistically indistinguishable from normal days.
+  - After an up-breakout: −0.01% to +0.04%, t < 0.3.
+  - After a down-breakout: −0.02% in train vs +0.27% in test, with the sign flipping between periods. Neither "breakout continuation" nor "breakout reversal" is a reliable signal.
+
+### C. As long-UPRO / cash indicators (5 bps per fill)
+
+| Long UPRO when..., else cash | Balanced acc. (train / test) | CAGR train | CAGR test | Max DD train | Max DD test | Sharpe test |
+|---|---|---|---|---|---|---|
+| always long UPRO | 50.0 / 50.0% | 30.7% | 22.7% | −53% | −75% | 0.65 |
+| GEX > 0 | 49.9 / 50.8% | 18.5% | 24.9% | −57% | −58% | 0.72 |
+| GEX above its trailing 1-year median | 50.3 / 48.6% | 9.4% | −3.6% | −34% | −48% | 0.03 |
+| **realized vol < 20% (current candidate)** | 50.5 / 50.6% | **27.5%** | **21.6%** | **−35%** | **−38%** | 0.71 |
+| realized vol < 20% AND GEX > 0 | 50.8 / 50.8% | 23.9% | 18.6% | −44% | −40% | 0.66 |
+| realized vol < 20% OR GEX > 0 | 49.6 / 50.7% | 22.0% | 28.0% | −55% | −62% | 0.77 |
+
+*(Cash earns 0% in this table, so filters that hold cash are slightly understated relative to Part 5.)*
+
+- **No options indicator predicts direction:** balanced accuracy is 48.6–50.8%, a coin flip, like every other indicator tested.
+- **GEX doesn't improve the volatility filter as an on/off switch.** Exiting on negative GEX misses the sharp rebounds that follow those days (point A2), so it lowers returns without consistently cutting drawdowns. No combination beat `vol_filter` in both periods.
+
+### Verdict
+
+- **Direction: rejected**, for both GEX and expected move.
+- **Volatility: GEX is a genuinely good forecaster**, possibly the best one tested. Its natural use is **position sizing** (holding less UPRO when GEX is negative), not an on/off switch. That's worth one follow-up test, for example 1/3 weight when GEX < 0. It would need careful handling, because negative-GEX days also carry the best average returns.
+
+### Caveats
+
+- SqueezeMetrics' GEX is a **model estimate**: dealer positioning is inferred from open interest under assumptions about who is long or short. It isn't directly observed. The history was downloaded today, and I can't verify whether past values were ever revised.
+- VIX1D covers only 3.5 years. 0-DTE trading has grown so much since 2022 that pre-2022 behavior may not represent today's market.
+- **The way to test the real thing:** the Schwab API's `option_chains` endpoint gives live chains. A daily collector job (Phase D) could snapshot SPY's 0-DTE chain at the open, compute the ATM straddle and our own GEX estimate, and store them in Postgres. After 6–12 months there'd be first-hand data to test these ideas directly, rather than through proxies.
