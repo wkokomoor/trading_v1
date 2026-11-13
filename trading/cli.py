@@ -461,6 +461,76 @@ def cmd_db(args) -> None:
             print(f"imported {n:>6} bars  {source}/{symbol}")
 
 
+def cmd_portfolio(args) -> None:
+    from trading import portfolio as pf
+
+    engine = db_engine()
+    if args.portfolio_command == "create":
+        cls = load_strategy(args.strategy)
+        params = vars(cls(**parse_params(cls, args.param)).p)
+        p = pf.create_portfolio(engine, args.name, cls.name, params, args.allocation, args.mode)
+        print(
+            f"created {p.mode} portfolio {p.name!r}: {p.strategy} {p.params}, allocation {p.allocation:,.0f}"
+        )
+        return
+    if args.portfolio_command == "list":
+        for p in pf.list_portfolios(engine):
+            print(
+                f"{p.name:<20} {p.mode:<7} {p.strategy:<14} allocation {p.allocation:>10,.0f}  "
+                f"cash {p.cash:>10,.2f}  positions {p.positions or '-'}"
+            )
+        return
+    p = pf.get_portfolio(engine, args.name)
+    print(f"{p.name}: {p.mode} {p.strategy} {p.params}")
+    print(f"allocation {p.allocation:,.0f}  cash {p.cash:,.2f}  positions {p.positions or 'none'}")
+    for r in pf.recent_runs(engine, p.name, args.limit):
+        target = "hold" if r["target"] is None else (r["target"] or "cash")
+        print(f"\n{r['run_date']}  run #{r['id']}  {r['status']}  target={target}")
+        if r["error"]:
+            print(f"  error: {r['error']}")
+        for msg in r["risk"]:
+            print(f"  risk: {msg}")
+        for o in r["orders"]:
+            fill = (
+                f"filled {o['filled_qty']} @ {o['fill_price']:.2f}" if o["fill_price"] else o["error"] or ""
+            )
+            print(f"  {o['status']:<17} {o['side']:<4} {o['qty']:>5} {o['symbol']:<6} {fill}")
+
+
+def cmd_kill_switch(args) -> None:
+    from trading import portfolio as pf
+
+    engine = db_engine()
+    if args.action in ("on", "off"):
+        pf.set_kill_switch(engine, args.action == "on", args.reason or "")
+    state = pf.kill_switch(engine)
+    print(
+        f"kill switch is {'ON' if state['on'] else 'off'}"
+        + (f": {state['reason']}" if state["reason"] else "")
+    )
+
+
+def cmd_job(args) -> None:
+    from trading import jobs
+
+    engine = db_engine()
+    client = make_schwab_client(interactive=False)
+    if args.job == "trade":
+        from trading import portfolio as pf
+
+        names = args.portfolio or [p.name for p in pf.list_portfolios(engine) if p.mode == "shadow"]
+        if not names:
+            raise SystemExit("no portfolios: create one with `trading portfolio create`")
+        for name in names:
+            result = jobs.trade(engine, client, name, slippage_bps=args.slippage_bps)
+            print("\n".join(f"{k:>10}: {v}" for k, v in result.items()), end="\n\n")
+    elif args.job == "ingest":
+        print("\n".join(jobs.ingest(engine, client)))
+    elif args.job == "reconcile":
+        for result in jobs.reconcile(engine, client):
+            print("\n".join(f"{k:>10}: {v}" for k, v in result.items()), end="\n\n")
+
+
 def cmd_dry_run(args) -> None:
     from trading.live import run_dry_run
 
@@ -615,6 +685,33 @@ def parse_args(argv=None) -> argparse.Namespace:
     au.add_argument("--force", action="store_true", help="log in again even if the current login is valid")
     sc_sub.add_parser("check", help="read-only connection test and data-depth check (no balances shown)")
 
+    po = sub.add_parser("portfolio", help="create and inspect shadow/live portfolios")
+    po_sub = po.add_subparsers(dest="portfolio_command", required=True)
+    pc = po_sub.add_parser("create", help="a new portfolio that a strategy trades")
+    pc.add_argument("name")
+    pc.add_argument("-s", "--strategy", required=True)
+    pc.add_argument("-p", "--param", action="append", default=[], metavar="KEY=VALUE")
+    pc.add_argument("--allocation", type=float, required=True, help="max dollars the strategy may hold")
+    pc.add_argument("--mode", choices=["shadow"], default="shadow", help="live is Phase D part 2")
+    po_sub.add_parser("list")
+    ps = po_sub.add_parser("show", help="state, recent runs and orders")
+    ps.add_argument("name")
+    ps.add_argument("-n", "--limit", type=int, default=10)
+
+    ks = sub.add_parser("kill-switch", help="block all trading (checked by every trade run)")
+    ks.add_argument("action", choices=["on", "off", "status"])
+    ks.add_argument("--reason")
+
+    jb = sub.add_parser(
+        "job", help="scheduled jobs: trade (~09:35 ET), ingest and reconcile (after the close)"
+    )
+    jb_sub = jb.add_subparsers(dest="job", required=True)
+    jt = jb_sub.add_parser("trade", help="decide at the open and execute (shadow: simulated fills)")
+    jt.add_argument("--portfolio", action="append", help="default: every shadow portfolio")
+    jt.add_argument("--slippage-bps", type=float, default=0.0, help="extra slippage on simulated fills")
+    jb_sub.add_parser("ingest", help="refresh daily bars for every portfolio's symbols")
+    jb_sub.add_parser("reconcile", help="mark shadow portfolios at the close")
+
     dr = sub.add_parser("dry-run", help="today's target and the orders it WOULD place (sends nothing)")
     strategy_args(dr)
     return p.parse_args(argv)
@@ -636,5 +733,8 @@ def main(argv=None) -> None:
         "db": cmd_db,
         "dry-run": cmd_dry_run,
         "schwab": cmd_schwab,
+        "portfolio": cmd_portfolio,
+        "kill-switch": cmd_kill_switch,
+        "job": cmd_job,
     }
     commands[args.command](args)

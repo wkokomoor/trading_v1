@@ -261,22 +261,36 @@ This decides whether anything goes live.
 - [ ] Additional metrics: Sortino, Calmar, worst month, longest drawdown, turnover.
 - [ ] **Gate:** a strategy qualifies for shadow trading only if it beats buy-and-hold SPY on a risk-adjusted basis (Sharpe or Calmar) *out of sample*, with costs included.
 
-### Phase D: Execution layer (3–5 days)
+### Phase D: Execution layer
 
-- [ ] `Broker` interface; move `SimBroker` behind it.
-- [ ] `ShadowBroker`: writes the intended orders to `orders`, simulating fills at the real quote at order time. This is our "paper trading", since Schwab has no paper-trading API.
-- [ ] `SchwabBroker`: market orders (or marketable limit orders) via `place_order`, polling `order_details` until filled.
-- [ ] `risk.py` pre-trade checks:
-  - Maximum dollars allocated to the strategy (**never** the whole account, as the original script did).
-  - Maximum order size, and a stop if the account has dropped more than X% that day.
-  - A kill switch (a database flag or environment variable) that blocks all orders.
-  - Refuse to trade on stale data (today's open quote missing or obviously wrong).
-- [ ] Idempotent `trade` job using the `live_runs` uniqueness rule.
-- [ ] Job entry points: `python -m trading job trade|reconcile|ingest`.
+**Part 1 (done, 2026-11-13): shadow trading.**
+
+- [x] Tables (migration `live trading tables`):
+  - `portfolios`: a named book with a strategy, params and an allocation cap; shadow books also hold their simulated cash and positions;
+  - `live_runs`: one row per portfolio per day, `UNIQUE (run_date, portfolio)`;
+  - `orders`, `account_snapshots` (`open` after trading, `close` after reconcile) and `controls` (the kill switch).
+- [x] `trading/risk.py` pre-trade checks, all unit-tested:
+  - **halts the day** if the kill switch is on (DB flag or `TRADING_KILL_SWITCH` env var), a quote is missing, there's no opening price, a quote is stale, or the open gaps more than 25% from the previous close (treated as suspect data);
+  - **blocks single orders** for symbols outside the strategy;
+  - **blocks buys** when the daily loss limit is hit (15% below the last close snapshot) or when the orders would hold more than the allocation (+2%).
+- [x] `ShadowBroker`: fills at live Schwab bid/ask (falls back to the last price) plus optional slippage, never overspends, and keeps its state in Postgres. This is our "paper trading", since Schwab has no paper-trading API.
+- [x] Jobs: `trading job trade` (~09:35 ET), `job ingest` (after the close: refreshes Schwab daily bars) and `job reconcile` (after ingest: marks shadow books at the close).
+  - `trade` is **idempotent**: a second run the same day is skipped, and a failed run with no orders can be retried.
+  - On weekends, holidays or before 09:31 ET the jobs exit cleanly as "skipped", not as errors.
+- [x] CLI: `trading portfolio create|list|show`, `trading kill-switch on|off|status`; `dry-run` shares the open-view code with `trade`.
+- [x] 19 tests: every risk rule, the shadow broker, and the full job cycle against real Postgres with a fake Schwab client (fills, idempotency, retry after failure, kill switch, holidays, reconcile).
+- [x] First live shadow run (2026-11-13): `shadow-vol` (`vol_filter`, $10,000 virtual). SPY's 20-day volatility was 22.6%, so it stayed in cash. Schwab and Yahoo give identical volatility for the same window, so live and backtest signals agree.
+
+**Part 2 (next).**
+
+- [ ] **Run the shadow book daily** (by hand until Phase E): `job trade` after 09:31 ET, then `job ingest` and `job reconcile` after 16:15 ET, and `schwab auth` weekly. Shadow results start accumulating toward the month-long shadow period in Phase F.
+- [ ] **Shadow vs. backtest report:** replay `vol_filter` over the shadow days on the same data and compare positions and returns. Any difference is a bug or an unmodeled cost.
+  - Known source of difference: Schwab closes are **not** dividend-adjusted, so for about 20 days after each SPY ex-dividend date the live volatility reads slightly higher than the backtest's (Yahoo, adjusted).
+- [ ] `SchwabBroker` (real orders): market or marketable-limit orders via `place_order`, polling `order_details` until filled, recording partial fills and rejections. It must stay behind **several independent gates**: a portfolio in `live` mode, an explicit `TRADING_LIVE_ENABLED=yes` env var, the allocation cap, and the kill switch. Tests use a fake client only. It doesn't go live before Phase F.
+- [ ] Live reconcile: compare Schwab positions and fills with `orders`, and alert on any mismatch.
+- [ ] **Market-internals collector:** save `$ADD`, `$TICK` and `$VIX` quotes several times a day (open, 10:00 and the close) to build first-hand internals history for `rf_direction`.
+- [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
 - [ ] Token storage for the cloud (Secret Manager). Done locally: `trading schwab auth` (interactive login, weekly) and `trading schwab check` (read-only test; fails fast when a login is needed).
-- [ ] Tests for every job against the fake Schwab client and a Postgres container.
-- [ ] **Market-internals collector:** extend the collector to save `$ADD`, `$TICK` and `$VIX` quotes several times a day (open, 10:00 and the close) to build first-hand internals history for `rf_direction`.
-- [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and it gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
 
 ### Phase E: GCP deployment (2–3 days)
 

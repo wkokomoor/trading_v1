@@ -1,6 +1,6 @@
-"""Read-only live check: run a strategy on today's open and print the orders it WOULD place.
+"""Live helpers: build a strategy's view at today's open, and the read-only dry run.
 
-Nothing is ever sent to the broker. Real order placement is Phase 4.
+The dry run prints the orders a strategy WOULD place in the real account; nothing is sent.
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 
+import numpy as np
 import pandas as pd
 
 from trading.data import ET, SchwabSource, sessions
@@ -27,38 +28,43 @@ def live_account(client, symbols) -> tuple[float, dict[str, int]]:
     return float(acct["currentBalances"]["cashBalance"]), positions
 
 
-def run_dry_run(client, strategy: Strategy, now: dt.datetime | None = None) -> list[Order]:
-    now = now or dt.datetime.now(ET)
+def open_view(source, quotes: dict, strategy: Strategy, today: dt.date) -> MarketView:
+    """The strategy's view at today's open: completed daily bars through yesterday from
+    `source` (a data source or bar store), plus today's opening price from `quotes`."""
+    hist_start = today - dt.timedelta(days=math.ceil(strategy.required_history() * 1.6) + 15)
+    bars = {}
+    for s in strategy.required_symbols():
+        hist = source.fetch(s, hist_start, today - dt.timedelta(days=1))
+        hist = hist[hist.index < today]
+        today_row = pd.DataFrame(
+            {"open": [quotes[s].open], "high": [np.nan], "low": [np.nan], "close": [np.nan], "volume": [0]},
+            index=pd.Index([today], name="date"),
+        )
+        bars[s] = pd.concat([hist, today_row])
+    return MarketView(bars, today)
+
+
+def session_problem(now: dt.datetime) -> str | None:
+    """Why trading at `now` isn't possible (holiday, weekend, before the open), or None."""
     today = now.date()
     if today not in sessions(today, today):
-        raise SystemExit(f"{today} is not an NYSE trading day")
+        return f"{today} is not an NYSE trading day"
     if now.time() < dt.time(9, 31):
-        raise SystemExit("market has not opened yet")
+        return "market has not opened yet"
+    return None
 
+
+def run_dry_run(client, strategy: Strategy, now: dt.datetime | None = None) -> list[Order]:
+    from trading.brokers import schwab_quotes
+
+    now = now or dt.datetime.now(ET)
+    if problem := session_problem(now):
+        raise SystemExit(problem)
+    today = now.date()
     symbols = strategy.required_symbols()
-    source = SchwabSource(client)
-    hist_start = today - dt.timedelta(days=math.ceil(strategy.required_lookback() * 1.6) + 15)
-    bars = {s: source.fetch(s, hist_start, today - dt.timedelta(days=1)) for s in symbols}
-
-    tickers = {s: source.tickers.get(s, s) for s in symbols}
-    quotes = client.quotes(list(tickers.values())).json()
-    last = {}
-    for s, t in tickers.items():
-        q = quotes[t]["quote"]
-        today_row = pd.DataFrame(
-            {
-                "open": [q["openPrice"]],
-                "high": [float("nan")],
-                "low": [float("nan")],
-                "close": [float("nan")],
-                "volume": [0],
-            },
-            index=[today],
-        )
-        bars[s] = pd.concat([bars[s], today_row])
-        last[s] = float(q["lastPrice"])
-
-    weights = strategy.on_open(MarketView(bars, today))
+    quotes = schwab_quotes(client, symbols)
+    last = {s: q.last for s, q in quotes.items()}
+    weights = strategy.on_open(open_view(SchwabSource(client), quotes, strategy, today))
     cash, positions = live_account(client, symbols)
     orders = [] if weights is None else rebalance_orders(weights, positions, cash, last)
 
