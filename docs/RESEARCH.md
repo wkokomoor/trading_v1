@@ -514,3 +514,54 @@ In Schwab's daily internals bars, **high and low are the session's extreme readi
 ### Verdict on `rf_direction`
 
 **Rejected at the daily-open timescale, with VIX, SPY and prior-day internals.** The intraday form of the ADD/TICK ideas (divergences *during* the session, acted on by mid-morning) remains untested, because Schwab keeps only about 10 days of 1-minute history. The Phase D internals collector would build that history; revisit after about 12 months of collected data. The bar stays the same: out-of-sample AUC clearly above 0.52, and confidence that actually rises with outcomes.
+
+---
+
+## Part 8: Calendar and event effects, Track A (2026-11-13)
+
+**The question:** do any effects that are known *in advance* predict SPY's direction well enough to improve `vol_filter`? The strongest candidate is the **pre-FOMC drift**: Lucca & Moench (2015) documented large S&P gains in the 24 hours before scheduled Fed announcements. Some later studies report that it has weakened.
+
+- Reproduce with `uv run python research/calendar_effects.py`.
+- FOMC dates come from `research/data/fomc_announcements.csv`: 143 scheduled announcement dates from 2010 to 2027, parsed from the Federal Reserve's calendar pages by `research/fomc_calendar.py`.
+  - Unscheduled meetings, cancelled meetings, notation votes and conference calls are excluded.
+  - Every year has 8 dates except 2020, which has 7 because its March meeting was cancelled.
+  - All dates fall on trading days, and a test checks this.
+
+**The bar:** about a dozen flags were tested, so a flag counts only if it is significant (|t| ≥ 2 against all other days) **with the same sign in both** 2010–19 and 2020–26.
+
+### Results: SPY open → next-open return (the strategy's holding period). All days average +5.3 bps (2010–19) and +6.2 bps (2020–26).
+
+| Flag | Days (train / test) | Avg. return, 2010–19 / 2020–26 | t vs. other days | Close→close, for comparison with the literature |
+|---|---|---|---|---|
+| **Day before FOMC** | 78 / 54 | **+12.2 / +14.3 bps** (up on 67% / 57% of days) | +0.90 / +0.73 | +1.7 / +5.7 bps |
+| FOMC announcement day | 78 / 54 | −8.6 / −7.3 bps | −1.06 / −0.78 | **+11.1 / +11.0 bps** |
+| Day after FOMC | 78 / 54 | −2.3 / −11.9 bps | −0.78 / −1.05 | −20.9 / −10.0 bps |
+| Pre-holiday | 88 / 65 | +6.1 / +9.1 bps | +0.08 / +0.25 | |
+| Options-expiration Friday | 115 / 79 | −8.1 / −19.4 bps | −1.39 / −1.65 | |
+| Options-expiration week | 575 / 398 | +4.9 / −3.8 bps | −0.10 / −1.92 | |
+| Last session of the quarter | 39 / 27 | +22.3 / +9.4 bps | +1.06 / +0.13 | |
+| Monday | 459 / 322 | +0.1 / **+25.9 bps** | −1.35 / **+3.49** | |
+| Tuesday to Friday | | between −0.7 and +8.9 bps | all \|t\| < 1.2 | |
+
+**No flag passes.** In detail:
+
+1. **The pre-FOMC drift points the right way but is too weak to rely on.** The day before an announcement averaged about 2.5x a normal day in both periods, but with only about 130 events and noisy daily returns, t < 1. The effect may be real, but the evidence can't distinguish it from luck.
+2. **The FOMC-day gain happens before the open.** Measured close-to-close, announcement days gained +11 bps in both periods. But from the open to the next open they *lost* 7–9 bps. The gain arrives overnight and in the early morning, which a strategy deciding at the open can't capture. The day after FOMC tended to give some of it back.
+3. **Options-expiration Friday was negative in both periods** (t −1.4 / −1.7). It's the closest to a consistent signal, but it falls short of the bar. Treat it as a hypothesis to recheck with more data, not a rule. Adopting it now would mean choosing a rule after seeing the results.
+4. **The Monday effect exists only since 2020** (t +3.5 in 2020–26, nothing before). That's a period effect, which is exactly what the two-period rule is designed to filter out.
+
+### As add-ons to `vol_filter` (forced long on flagged days even when the filter says cash; 5 bps)
+
+| Variant | CAGR 2010–19 | CAGR 2020–26 | Max DD 2010–19 | Max DD 2020–26 | Sharpe 2010–19 | Sharpe 2020–26 |
+|---|---|---|---|---|---|---|
+| `vol_filter` | 29.1% | 21.6% | −36% | −38% | 0.92 | 0.71 |
+| + long on pre-FOMC days | 28.0% | 23.9% | −39% | −38% | 0.89 | 0.76 |
+| + long on FOMC days | 24.6% | 16.2% | −43% | −48% | 0.81 | 0.59 |
+| + long on pre-FOMC and FOMC days | 23.7% | 18.6% | −47% | −45% | 0.79 | 0.64 |
+| + long on pre-holiday days | 26.5% | 24.3% | −41% | −40% | 0.86 | 0.77 |
+
+No add-on helps in both periods. The pre-FOMC and pre-holiday versions help only in 2020–26 and cost something in 2010–19. Forcing a position on high-volatility days, which is when `vol_filter` is in cash, also adds drawdown.
+
+### Verdict
+
+**Track A is closed. No change to `vol_filter`.** The calendar effects are too small and too noisy, and where they exist (the FOMC-day gain) they fall in the overnight hours before a decision at the open. If the strategy were ever redesigned to decide at the previous **close** (see Part 4, "overnight only"), the FOMC effect would be worth retesting with that timing.
