@@ -73,11 +73,13 @@ def cmd_list(_args) -> None:
         print(f"{name}\n    {doc[0] if doc else ''}\n    params: {cls.params}")
 
 
-def load_market(args, strategies, end: dt.date, want_db: bool = False):
+def load_market(args, strategies, end: dt.date, want_db: bool = False, extra_symbols=()):
     """Bars for every symbol the given strategies need, plus the DB engine if one is in use."""
-    lookback = max(s.required_lookback() for s in strategies)
+    lookback = max([s.required_lookback() for s in strategies] or [1])
     fetch_start = args.start - dt.timedelta(days=math.ceil(lookback * 1.6) + 15)
-    symbols = tuple(dict.fromkeys(sym for s in strategies for sym in s.required_symbols()))
+    symbols = tuple(
+        dict.fromkeys([*extra_symbols, *(sym for s in strategies for sym in s.required_symbols())])
+    )
 
     store = args.store
     if store == "auto":
@@ -172,6 +174,94 @@ def cmd_sweep(args) -> None:
     print(f"ranked by {rank_col} (choose using {first} columns only)")
     with pd.option_context("display.width", 250, "display.max_columns", 40):
         print(table.to_string(index=False))
+
+
+def parse_measure(spec: str):
+    """'spy_vix' or 'spy_vix:vix_high=25,short=' -> strategy instance."""
+    name, _, params = spec.partition(":")
+    return build_strategy(name, [p for p in params.split(",") if p] if params else [])
+
+
+def cmd_feasibility(args) -> None:
+    import numpy as np
+
+    from trading import feasibility as F
+
+    measured_strategies = [parse_measure(m) for m in args.measure]
+    labels = dict(zip(map(id, measured_strategies), args.measure, strict=True))
+    end = args.end or last_complete_session()
+    bars, _, _ = load_market(
+        args, measured_strategies, end, extra_symbols=(args.index, args.long, args.short)
+    )
+    rets = F.daily_returns(bars, args.start, end, args.index, args.long, args.short)
+    n, slip = len(rets), args.slippage_bps
+    print(
+        f"{rets.index[0]}..{rets.index[-1]}: {n} days, decide at each open and hold to the next open, "
+        f"{slip:g} bps slippage per fill.\n{args.index} rose on {(rets['index'] >= 0).mean():.1%} of days."
+    )
+
+    def run(pos):
+        return F.metrics(F.simulate(pos, rets, slip)).iloc[0]
+
+    spy_hold = F.metrics(np.cumprod(1 + rets["index"].to_numpy())).iloc[0]
+    long_hold = run(np.ones(n, dtype=np.int8))
+    references = {f"hold {args.index}": spy_hold["cagr"], f"hold {args.long}": long_hold["cagr"]}
+
+    print("\n1) PERFECT FORESIGHT (the ceiling)")
+    rows = {f"hold {args.index}": spy_hold, f"hold {args.long}": long_hold}
+    for mode in F.MODES:
+        pos = F.oracle_positions(rets["index"], mode)
+        rows[f"oracle {mode}"] = run(pos)
+    table = pd.DataFrame(rows).T
+    table["multiple"] = [f"{v:,.3g}x" for v in table["multiple"]]
+    for col in ("cagr", "max_drawdown"):
+        table[col] = [f"{v:.1%}" for v in table[col]]
+    table["sharpe"] = [f"{v:.2f}" for v in table["sharpe"]]
+    print(table.to_string())
+
+    print(f"\n2) IMPERFECT FORESIGHT ({args.sims} random indicators per accuracy level)")
+    accuracies = np.round(np.arange(args.min_accuracy, args.max_accuracy + 1e-9, 0.01), 3)
+    curves = {}
+    for mode in F.MODES:
+        c = F.accuracy_curve(rets, accuracies, args.sims, slip, mode)
+        curves[mode] = c
+        shown = c[["accuracy", "cagr_p10", "cagr_median", "cagr_p90", "sharpe_median", "max_dd_median"]]
+        shown = shown.copy()
+        shown["accuracy"] = [f"{v:.0%}" for v in shown["accuracy"]]
+        for col in ("cagr_p10", "cagr_median", "cagr_p90", "max_dd_median"):
+            shown[col] = [f"{v:.1%}" for v in shown[col]]
+        shown["sharpe_median"] = [f"{v:.2f}" for v in shown["sharpe_median"]]
+        print(f"\n{mode}:")
+        print(shown.to_string(index=False))
+
+    print("\n3) ACCURACY NEEDED (median outcome)")
+    targets = {"break even (0%)": 0.0, **{f"beat {k}": v for k, v in references.items()}}
+    need = pd.DataFrame(
+        {
+            mode: {
+                t: (f"{a:.1%}" if (a := F.break_even(c, v)) is not None else "> range")
+                for t, v in targets.items()
+            }
+            for mode, c in curves.items()
+        }
+    )
+    print(need.to_string())
+
+    measured = {}
+    if measured_strategies:
+        print("\n4) MEASURED INDICATORS (balanced accuracy: always-long and coin flips score 50%)")
+        for strat in measured_strategies:
+            res = run_backtest(strat, bars, args.start, end, args.cash, slip)
+            holding = res.daily["holding"].reindex(rets.index).fillna("CASH")
+            pos = np.where(holding == args.long, 1, np.where(holding == args.short, -1, 0))
+            acc = F.balanced_accuracy(pos, rets["index"])
+            cagr = res.summary()["cagr"]
+            measured[labels[id(strat)]] = (acc, cagr)
+            print(f"  {strat!r}\n    balanced accuracy {acc:.2%}, CAGR {cagr:.1%}")
+
+    if args.plot:
+        F.plot_accuracy(curves, references, measured, args.plot)
+        print(f"\nwrote chart to {args.plot}")
 
 
 PCT_KEYS = {"total_return", "cagr", "volatility", "max_drawdown", "time_in_market", "max_dd", "bench_cagr"}
@@ -340,6 +430,27 @@ def parse_args(argv=None) -> argparse.Namespace:
     sw.add_argument("--rank", choices=["sharpe", "cagr", "max_drawdown"], default="sharpe")
     sw.add_argument("--top", type=int, default=20, help="show the best N combinations")
 
+    fe = sub.add_parser(
+        "feasibility",
+        help="oracle test: what would long/short/cash earn with a perfect or p%%-accurate indicator?",
+    )
+    market_args(fe, slippage_default=5.0)
+    fe.add_argument("--index", default="SPY")
+    fe.add_argument("--long", default="UPRO")
+    fe.add_argument("--short", default="SPXU")
+    fe.add_argument("--sims", type=int, default=500, help="random indicators per accuracy level")
+    fe.add_argument("--min-accuracy", type=float, default=0.46)
+    fe.add_argument("--max-accuracy", type=float, default=0.60)
+    fe.add_argument(
+        "--measure",
+        action="append",
+        default=[],
+        metavar="STRATEGY[:k=v,...]",
+        help="measure a strategy's balanced accuracy, e.g. spy_vix or spy_vix:vix_high=25 (repeatable)",
+    )
+    fe.add_argument("--plot", help="write the accuracy chart to this PNG")
+    fe.add_argument("-v", "--verbose", action="store_true")
+
     runs = sub.add_parser("runs", help="list and compare saved backtest runs")
     runs_sub = runs.add_subparsers(dest="runs_command", required=True)
     rl = runs_sub.add_parser("list", help="most recent runs first")
@@ -372,6 +483,7 @@ def main(argv=None) -> None:
         "list": cmd_list,
         "backtest": cmd_backtest,
         "sweep": cmd_sweep,
+        "feasibility": cmd_feasibility,
         "runs": cmd_runs,
         "db": cmd_db,
         "dry-run": cmd_dry_run,

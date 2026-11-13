@@ -2,6 +2,77 @@
 
 *November 2026. Data: Yahoo daily bars from April 2010 to November 2026, with prices adjusted for splits and dividends. All results include 5 bps slippage per fill unless stated otherwise.*
 
+## Part 1: Is the approach feasible? (the oracle test)
+
+**The goal:** each morning, go long (UPRO), short (SPXU) or to cash on the S&P 500, then hold until the next morning's rebalance. Holding overnight avoids same-day round trips, so this isn't day trading.
+
+**The question:** before searching for an indicator, would this approach pay off if the indicator were right? And how right does it need to be?
+
+```sh
+uv run trading feasibility --start 2010-04-13 --measure spy_vix --measure spy_vix:short= --plot docs/img/feasibility.png
+```
+
+![Accuracy needed](img/feasibility.png)
+
+### Answer: the approach is feasible, but the bar for the indicator is high
+
+**With perfect foresight the approach is extraordinarily profitable.**
+
+| Apr 2010 – Nov 2026 | CAGR | Max drawdown | Sharpe |
+|---|---|---|---|
+| Hold SPY | 13.7% | −32% | 0.86 |
+| Hold UPRO | 27.7% | −75% | 0.74 |
+| Perfect oracle, long / cash | ~1,500% | −2% | 9.5 |
+| Perfect oracle, long / short | ~17,000% | −4% | 14.3 |
+
+These perfect-oracle results use the real UPRO and SPXU prices, so leveraged-ETF decay, fees and 5 bps slippage are all included. The vehicle itself works: nothing about the UPRO/SPXU mechanics or daily rebalancing prevents profit.
+
+**With imperfect foresight, the required accuracy is the real hurdle.** I simulated 500 random indicators at each accuracy level. Accuracy here is *balanced* accuracy: the average of the up-day hit rate and the down-day hit rate. SPY rises on 56% of days, so "always long" looks 56% accurate while knowing nothing; on balanced accuracy, always-long and coin flips both score exactly 50%.
+
+| Median indicator must be at least... | long / short | long / cash |
+|---|---|---|
+| ...to break even | 52.4% | 48.9% |
+| ...to beat holding SPY (13.7%/yr) | 53.5% | 51.3% |
+| ...to beat holding UPRO (27.7%/yr) | 54.6% | 53.3% |
+
+What this shows:
+
+1. **Long / cash is the better design unless the indicator is exceptional.** Long / cash beats long / short at every accuracy below about 56%, with smaller drawdowns. Shorting only pays once the indicator is above about 56%.
+2. **Drawdowns stay brutal at realistic accuracy.** At 54%, the median long / short indicator still suffers a −78% max drawdown, and long / cash −56%. Even a genuinely good daily indicator, on 3x leverage, means riding deep losses.
+3. **Daily direction indicators are rarely that good.** Sustained balanced accuracy of 53–55% for next-day S&P direction would be an exceptional result. Most published daily signals fall well short of it once costs are included, so treat any backtest claiming it with suspicion.
+
+### Is VIX the right indicator? Measured: no, not for direction.
+
+| Indicator (call "up" when...) | Balanced accuracy |
+|---|---|
+| always (always long) | 50.00% |
+| VIX < 15 | 50.78% |
+| VIX < 20 | 50.61% |
+| VIX < 25 / < 30 | 50.23% / 50.06% |
+| contrarian: VIX > 20 | 49.36% |
+| VIX below VIX3M (no backwardation) | 50.17% |
+| VIX fell overnight | 50.09% |
+| SPY gap ≤ +0.5% | 50.88% |
+| **original `spy_vix` rule** | **50.29%** |
+
+Every VIX rule sits at 50–51%, indistinguishable from a coin flip and far below the roughly 53.5% needed to beat SPY. The original rule's −99% result came from two things: no directional information, plus a short leg that loses money on average because the market drifts up.
+
+VIX does carry information about **how much** the market will move, not **which way** (see Part 2). That makes it a sizing input, not a direction signal.
+
+### How the test works, and its limits
+
+- The model matches the backtester: positions are decided at the open and held until the next open, and each switch pays slippage on the exit and the entry. A test confirms that the fast simulator and the real engine produce the same equity on identical positions.
+- The random indicators are wrong on independent days. Real indicators tend to be wrong in streaks, which widens the range of outcomes and usually lowers the median for the same accuracy. Read the break-even numbers as optimistic minimums.
+- Balanced accuracy counts every day equally. An indicator that is right on the *big* days can be worth more than its accuracy suggests, and one that is right only on small days can be worth less. When measuring a new indicator, check its actual backtest as well as its accuracy (`--measure` reports both).
+
+### Recommended next step
+
+Use `trading feasibility --measure <strategy>` as a gate: measure any candidate indicator's balanced accuracy **before** tuning it. If it isn't clearly above about 52% on 2010–2019 and still above it on 2020+, more tuning won't fix it.
+
+---
+
+## Part 2: Improving the original strategy
+
 ## TL;DR
 
 - **The original `spy_vix` lost about 99% of its value.** Almost all of the damage came from its short leg: holding SPXU when VIX was above 20.

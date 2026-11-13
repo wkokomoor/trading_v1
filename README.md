@@ -40,6 +40,10 @@ uv run trading backtest -s sma_trend --benchmark-param symbol=UPRO
 uv run trading backtest -s spy_vix --plot results/equity.png --out results/ -v
 uv run trading backtest -s spy_vix -p vix_high=25 --label "wider vix band"   # note stored with the run
 
+uv run trading sweep -s vix_gap -g target_vol=0,0.45,0.75 -g trend_window=0,200   # tune on 2010-19, check on 2020+
+uv run trading feasibility --measure spy_vix --plot feasibility.png               # would a perfect / p%-accurate
+                                                                                  # indicator pay? how accurate is this one?
+
 uv run trading runs list                              # saved runs, newest first (-s spy_vix to filter)
 uv run trading runs show 4                            # one run vs. its benchmark
 uv run trading runs show 1 3 4 --plot compare.png     # several runs side by side
