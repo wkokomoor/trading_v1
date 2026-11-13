@@ -1,6 +1,6 @@
 # Development Plan
 
-Status as of 2026-11-12. This plan covers how the project gets from a local backtesting tool to a scheduled trading system running on Google Cloud (GCP), with data stored in PostgreSQL.
+Status as of 2026-11-13 (Phases A–C merged through PR #5). This plan covers how the project gets from a local backtesting tool to a scheduled trading system running on Google Cloud (GCP), with data stored in PostgreSQL.
 
 **Guiding rule:** no real money goes into a strategy until it has passed the research gate (Phase C) and run in shadow mode for at least a month (Phase D).
 
@@ -11,25 +11,30 @@ Status as of 2026-11-12. This plan covers how the project gets from a local back
 | Area | State |
 |---|---|
 | Strategy framework | One file per strategy in `strategies/`, loaded by name or path. Strategies see only past bars plus today's open (no look-ahead). |
-| Backtesting | Daily bars, decide and fill at the open, value at the close. Whole shares, slippage, benchmark comparison, metrics, CSV and PNG output. |
-| Data | Yahoo Finance (default) or Schwab daily bars, cached as CSV under `.cache/`. |
+| Backtesting | Daily bars, decide and fill at the open, value at the close. Whole shares, slippage, interest on idle cash (historical T-bill yield by default), benchmark comparison, metrics, CSV and PNG output. |
+| Research tools | `sweep` (train/test split), `walkforward` (yearly re-tune vs. fixed params), `feasibility` (oracle / accuracy test), plus scripts in `research/`. |
+| Data | Yahoo Finance (default) or Schwab daily bars, read through a cache: PostgreSQL when `DATABASE_URL` is set, otherwise CSV under `.cache/`. |
+| Storage | PostgreSQL (local Docker; Cloud SQL later): `bars_daily`, `bar_coverage`, `backtest_runs/daily/trades`, managed with Alembic migrations. |
 | Live | `dry-run` reads the Schwab account and prints the orders it *would* place. Nothing is sent. |
-| Tests | 32 pytest tests, including a fake Schwab client. |
-| Findings | The original `spy_vix` lost 91% over 2010–2026 because of the short (SPXU) side. Long-only variants and `sma_trend` beat SPY on total return but not on risk-adjusted return. |
+| Tests | 81 pytest tests, including a fake Schwab client and real-Postgres tests. CI runs lint, the format check and all tests. |
+| Findings | See [RESEARCH.md](RESEARCH.md), Parts 1–6. VIX and every other indicator tested is a coin flip on direction. The **`vol_filter`** (UPRO while SPY's 20-day realized volatility is under 20%, else cash) is the candidate: about 90% of UPRO's return with half its drawdown (2015–2026). |
 
 ### Current architecture
 
 ```mermaid
 flowchart LR
-    CLI["python -m trading<br/>(list / backtest / dry-run)"] --> Engine["engine.py<br/>backtest loop, SimBroker, metrics"]
+    CLI["trading CLI<br/>list / backtest / sweep / walkforward /<br/>feasibility / runs / db / dry-run"] --> Engine["engine.py<br/>backtest loop, SimBroker, metrics"]
+    CLI --> Research["research.py, feasibility.py"]
     CLI --> Live["live.py<br/>dry run"]
+    Research --> Engine
     Engine --> Strat["strategies/*.py"]
     Live --> Strat
-    Engine --> Data["data.py<br/>Yahoo / Schwab sources"]
-    Data --> CSV[(".cache/*.csv")]
+    Engine --> Store["data/store.py<br/>PostgresStore / CsvStore"]
+    Store --> PG[("PostgreSQL")]
+    Store --> Sources["data/sources.py<br/>Yahoo / Schwab"]
+    CLI --> Runs["db/runs.py<br/>saved backtest runs"]
+    Runs --> PG
     Live --> Schwab["Schwab API"]
-    Data --> Yahoo["Yahoo Finance"]
-    Data --> Schwab
 ```
 
 ---
@@ -242,8 +247,10 @@ Each phase ends in something usable. Phases B and C can run in parallel.
 This decides whether anything goes live.
 
 - [x] `trading sweep`: run a grid of params with a train/test split, ranked on train results only (default 5 bps slippage). Sweep results aren't stored in Postgres yet; chosen candidates are saved with `backtest`.
-- [x] First research round: see [RESEARCH.md](RESEARCH.md). The original `spy_vix` fails, and `vix_gap` (trend + VIX sizing) is the current candidate.
-- [ ] Decide the objective: Sharpe, or growth subject to a drawdown limit (see RESEARCH.md).
+- [x] First research round: see [RESEARCH.md](RESEARCH.md). The original `spy_vix` fails; `vix_gap` was an interim candidate, superseded by `vol_filter`.
+- [x] Feasibility (oracle) test, traditional-indicator screen, intraday-exit study, and options indicators: RESEARCH.md Parts 1, 3, 4 and 6.
+- [ ] **GEX-based position sizing for `vol_filter`.** Parked on 2026-11-13; full brief in [section 3a](#3a-parked-gex-based-position-sizing) below.
+- [ ] Decide the objective: Sharpe, or growth subject to a drawdown limit (see RESEARCH.md). **This blocks the gate below.** `vol_filter` ties SPY's Sharpe over 2010–2026 (0.84 vs 0.84) but trails it over 2015–2026 (0.74 vs 0.81), so it passes only under a growth-with-drawdown-limit objective.
 - [x] Credit interest on idle cash (`--cash-rate`, default: historical T-bill yield).
 - [x] `trading walkforward`: re-tune yearly on prior data, trade the next year; compare with fixed settings. Finding: yearly re-tuning hurts, so use fixed params.
 - [x] Candidate for Phase D: `vol_filter` with fixed defaults (20-day / 20%). See RESEARCH.md Part 5.
@@ -266,6 +273,7 @@ This decides whether anything goes live.
 - [ ] Job entry points: `python -m trading job trade|reconcile|ingest`.
 - [ ] Token storage plus the `auth` command (see the Schwab token lifecycle section).
 - [ ] Tests for every job against the fake Schwab client and a Postgres container.
+- [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and it gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
 
 ### Phase E: GCP deployment (2–3 days)
 
@@ -290,6 +298,78 @@ This decides whether anything goes live.
 2. **Shadow** for at least 1 month: compare shadow results with what a backtest says for the same days. They should match closely, and any gap is a bug or a cost we haven't modeled.
 3. **Live with a small, fixed allocation** and the risk limits on. Review weekly.
 4. Increase the allocation only after live results track the shadow and backtest results.
+
+---
+
+## 3a. Parked: GEX-based position sizing
+
+*Parked 2026-11-13. This is a self-contained brief for resuming the work later. Background: [RESEARCH.md Part 6](RESEARCH.md#part-6-options-market-indicators-gamma-exposure-and-expected-move-2026-11-13).*
+
+### Why this is worth testing
+
+Part 6 found that the previous day's **negative GEX** (dealers short gamma) is a strong, consistent forecaster of *how much* SPY moves the next day:
+
+- the next day's average |move| was about 2.2x larger (train 1.29% vs 0.57%; test 1.61% vs 0.72%);
+- the worst-5% day was about 2x worse;
+- it carries information beyond realized volatility: even in calm markets, negative-GEX days moved 1.05% vs 0.57%.
+
+But those same days had **positive** average next-day returns (+0.22% train, +0.08% test), with sharp rebounds. As a result, *exiting* on negative GEX (an on/off switch) lowered returns without consistently reducing drawdowns.
+
+**The hypothesis:** *reducing* UPRO exposure on negative-GEX days, rather than exiting, keeps part of the rebound while cutting the outsized risk, improving `vol_filter`'s risk-adjusted return and drawdown. This is volatility targeting: if risk is about 2.2x normal, holding about 1/2.2 ≈ 0.5 of the position keeps risk roughly constant.
+
+### Pre-registered test (decide these before looking at results)
+
+| Item | Value |
+|---|---|
+| Baseline | `vol_filter` with fixed defaults (window 20, threshold 0.20, cash when off) |
+| Hypothesis value | `gex_weight = 0.5`, chosen a priori from the 2.2x volatility ratio, *not* tuned |
+| Neighbors (robustness) | `gex_weight` ∈ {0, 0.25, 0.33, 0.5, 0.75, 1.0}; 1.0 = baseline, 0 = the on/off switch already tested |
+| Trigger | Primary: yesterday's GEX < 0. Secondary: yesterday's GEX below its trailing 252-day 20th percentile. GEX dollar levels have grown about 5x since 2011, but the sign is scale-free. |
+| Periods | Train **2011-06-01 – 2019-12-31** (GEX data begins May 2011). Test 2020-01-01 → latest. Walk-forward from 2015. **Rerun the baseline from the same start date**; the Part 5 numbers start in 2010 and aren't directly comparable. |
+| Costs | 5 bps per fill, T-bill interest on cash (defaults). Report trade count: GEX sign flips add rebalances. |
+
+**Success criteria (all must hold):**
+
+1. `gex_weight = 0.5` beats the baseline on **both Sharpe and max drawdown** in **both** train and test.
+2. The neighbors 0.33 and 0.75 also beat the baseline on Sharpe in both periods. If only one exact value works, it's noise.
+3. In walk-forward from 2015, fixed `gex_weight = 0.5` beats the fixed baseline.
+4. Stretch goal: it clears the Phase C gate (beats buy-and-hold SPY's Sharpe out of sample). That would be the first strategy to do so.
+
+If 1–3 fail, record the result in RESEARCH.md and close the idea, as was done for VIX.
+
+### Implementation steps
+
+1. **Data source for GEX** in `trading/data/sources.py`: a `SqueezeMetricsSource` (name `"squeezemetrics"`) that downloads `https://squeezemetrics.com/monitor/static/DIX.csv`. Reuse `load_gex()` from `research/options_indicators.py`. Use `requests`, not `urllib`: python.org's macOS Python has no root certificates.
+   - Return a bars-shaped DataFrame for the canonical symbol `"GEX"`, with the GEX value in `close` and `open` (and `high`/`low` `NaN`, `volume` 0), so it flows through `CsvStore`/`PostgresStore` and `bars_daily` unchanged.
+   - Since GEX is an **end-of-day** value, strategies must read it only through `view.history("GEX", 1)["close"]` (yesterday's value), never `view.open("GEX")`. Put this in the docstring and test it.
+2. **Routing:** strategies need SPY/UPRO from Yahoo *and* GEX from SqueezeMetrics. Add a small `RoutingSource` (symbol → source; `name` per symbol) or let `load_market()` in `trading/cli.py` load `GEX` from its own store and merge it into `bars`. Whichever you choose, each bar store must be keyed by the *real* source name, because `bars_daily` uses `(source, symbol, date)` as its key.
+3. **Calendar alignment:** GEX dates should match NYSE sessions. `run_backtest` only simulates dates where *all* of a strategy's symbols have bars, so any missing GEX date silently drops a trading day. Either forward-fill GEX onto SPY's dates in the source, or count the dropped days and fail loudly if there are more than a handful.
+4. **Strategy:** extend `strategies/vol_filter.py` with params `gex_weight` (default **1.0**, meaning off, so the candidate's behavior is unchanged), `gex_rule` (`"sign"` | `"pct20"`) and `gex_symbol` (default `"GEX"`). When the filter is on and the GEX rule triggers, return `{long: gex_weight}`; the remainder stays in cash and earns interest. Only require `GEX` in `required_symbols()` when `gex_weight != 1.0`. Otherwise the default `vol_filter` would need GEX data and lose its 2010 start.
+5. **Tests** (in `tests/test_vol_filter.py`):
+   - the GEX rule reads only yesterday's value;
+   - the weight is applied only when the volatility filter is on;
+   - `gex_weight=1.0` reproduces today's `vol_filter` exactly, on the same bars;
+   - `pct20` uses a trailing window only;
+   - the source parses the CSV format (`date,price,dix,gex`), using a small fixture, not the network.
+
+### Commands to run once implemented
+
+```sh
+uv run trading backtest -s vol_filter --start 2011-06-01 --label "baseline from 2011-06"
+uv run trading backtest -s vol_filter -p gex_weight=0.5 --start 2011-06-01 --label "gex_weight 0.5 (pre-registered)"
+uv run trading sweep -s vol_filter --start 2011-06-01 -g gex_weight=0,0.25,0.33,0.5,0.75,1.0 -g gex_rule=sign,pct20
+uv run trading walkforward -s vol_filter --start 2011-06-01 -g gex_weight=0,0.25,0.33,0.5,0.75,1.0 \
+    --reference gex_weight=1.0 --reference gex_weight=0.5 --plot docs/img/vol_filter_gex_walkforward.png
+uv run trading runs show <baseline id> <gex id> --plot docs/img/vol_filter_gex.png
+```
+
+Then write the result up as RESEARCH.md Part 7, whether it passes or fails.
+
+### Risks to resolve before trading it live
+
+- **Data dependency.** SqueezeMetrics is a free third-party feed with no service guarantee, and its GEX is a *model estimate* whose history may have been revised. Before relying on it: check when each day's value is published (it must be available before 09:30 ET the next morning), and keep our own copy in Postgres. The Phase D options collector, which computes our own GEX from Schwab chains, is the long-term replacement. Compare the two once the collector has a few months of data.
+- **The 0-DTE era.** 0-DTE volume has exploded since 2022, and end-of-day GEX may miss intraday 0-DTE hedging flows. Look at the 2023+ subperiod separately.
+- **Extra turnover.** Partial positions mean more rebalances (GEX was negative on 7–11% of days). Confirm that costs don't consume the benefit.
 
 ---
 
