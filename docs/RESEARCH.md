@@ -232,3 +232,49 @@ Build a `vol_filter` strategy: long UPRO while SPY's 20-day realized volatility 
 3. run a walk-forward test before it goes anywhere near shadow trading.
 
 Also credit interest on cash. These filters sit in cash for 10–35% of days, so they're currently understated.
+
+---
+
+## Part 4: Would intraday exits help? (2026-11-13)
+
+**The question:** if day-trading restrictions loosen, does exiting during the day improve the strategy? Reproduce with `uv run python research/intraday_exits.py`.
+
+> Note on the rules: I haven't verified the current status of FINRA's pattern-day-trader rule, which applies to margin accounts. Confirm with Schwab. Cash accounts were never subject to it, though they are subject to settlement rules. In this strategy, a stop-loss that sells shares bought the same morning **is** a day trade; the "overnight only" variant below is **not**.
+
+### Where the return comes from
+
+| Annual return | SPY session (open→close) | SPY overnight (close→next open) | UPRO session | UPRO overnight |
+|---|---|---|---|---|
+| Train 2010–19 | 4.0% | **8.7%** | 5.9% | **24.1%** |
+| Test 2020–26 | 5.1% | **9.2%** | 5.7% | **16.1%** |
+
+Most of the gain came overnight, a well-documented pattern (the "overnight effect"). The trading session, the part that intraday exits would let you skip or cut short, contributed relatively little.
+
+### Variants tested
+
+The table uses 5 bps slippage, plus 10 bps extra on stop fills. Stops are simulated from the daily low: if UPRO traded X% below that morning's open, the position exits at that price and stays in cash until the next open.
+
+| Strategy | CAGR train | CAGR test | Max DD train | Max DD test |
+|---|---|---|---|---|
+| Always long UPRO, open → next open | 31.3% | 22.7% | −55% | −75% |
+| ... + 3% stop | 19.3% | 27.9% | −56% | −54% |
+| ... + 5% stop | 23.1% | 25.1% | −52% | −63% |
+| ... session only | −17.7% | −17.8% | −90% | −78% |
+| ... overnight only | −3.6% | −9.7% | −53% | −71% |
+| **Realized vol < 20% filter, open → next open** | **29.1%** | **21.6%** | **−36%** | **−38%** |
+| ... + 2% stop | 13.0% | 14.9% | −50% | −38% |
+| ... + 5% stop | 30.1% | 20.8% | −34% | −37% |
+| ... session only | −10.4% | −19.6% | −72% | −79% |
+| ... overnight only | −6.4% | 2.1% | −56% | −43% |
+| ... overnight only, at 1 bp slippage | 11.3% | 19.6% | −43% | −32% |
+
+### Findings
+
+1. **Intraday exits don't robustly improve the strategy.** Tight stops (2–3%) mostly sell intraday dips that recover. They hurt in 2010–2019 and only looked good in 2020–2026 on plain UPRO, which is a period-specific result. A 5% stop on the filter strategy is roughly neutral.
+2. **Session-only trading loses money in every version.** It keeps the weak part of the return and pays for two fills a day.
+3. **Overnight-only is the one idea with something behind it**, but it needs very low costs. It means about 500 fills a year, so 5 bps per fill erases it. At about 1 bp, which is plausible with market-on-close and market-on-open auction orders, the filter version reached 19.6% in test with a −32% drawdown, but only 11.3% in train. It needs a closer look with real auction-fill costs before it's taken seriously. It requires no day trades.
+4. **The stop results are optimistic.** Real stop orders on leveraged ETFs can fill far below their trigger in fast markets; during the August 24, 2015 open, many ETF stops executed far below their stop prices.
+
+### Verdict
+
+Keep the daily open → next open design. The risk control that works, the volatility filter, operates at daily frequency. Intraday ability is still valuable for **operations**: an emergency exit and the kill switch in Phase D. Intraday *strategies* would need years of minute-level data, and Schwab keeps only a short window of it, so they'd need a paid data source.
