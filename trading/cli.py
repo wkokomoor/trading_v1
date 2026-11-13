@@ -73,26 +73,31 @@ def cmd_list(_args) -> None:
         print(f"{name}\n    {doc[0] if doc else ''}\n    params: {cls.params}")
 
 
-def cmd_backtest(args) -> None:
-    strategy = build_strategy(args.strategy, args.param)
-    benchmark = build_strategy(args.benchmark, args.benchmark_param)
-
-    end = args.end or last_complete_session()
-    lookback = max(strategy.required_lookback(), benchmark.required_lookback())
+def load_market(args, strategies, end: dt.date, want_db: bool = False):
+    """Bars for every symbol the given strategies need, plus the DB engine if one is in use."""
+    lookback = max(s.required_lookback() for s in strategies)
     fetch_start = args.start - dt.timedelta(days=math.ceil(lookback * 1.6) + 15)
-    symbols = tuple(dict.fromkeys(strategy.required_symbols() + benchmark.required_symbols()))
+    symbols = tuple(dict.fromkeys(sym for s in strategies for sym in s.required_symbols()))
 
     store = args.store
     if store == "auto":
         store = "postgres" if get_settings().database_url else "csv"
-    engine = db_engine() if store == "postgres" or args.save else None
+    engine = db_engine() if store == "postgres" or want_db else None
 
     source = YahooSource() if args.source == "yahoo" else SchwabSource(make_schwab_client())
     if store == "postgres":
         source = PostgresStore(source, engine)
     elif store == "csv":
         source = CsvStore(source, args.cache_dir)
-    bars = load_bars(source, symbols, fetch_start, end)
+    return load_bars(source, symbols, fetch_start, end), engine, store
+
+
+def cmd_backtest(args) -> None:
+    strategy = build_strategy(args.strategy, args.param)
+    benchmark = build_strategy(args.benchmark, args.benchmark_param)
+
+    end = args.end or last_complete_session()
+    bars, engine, store = load_market(args, [strategy, benchmark], end, want_db=bool(args.save))
 
     result = run_backtest(strategy, bars, args.start, end, args.cash, args.slippage_bps)
     if result.daily.empty:
@@ -133,6 +138,40 @@ def cmd_backtest(args) -> None:
     if args.plot:
         plot_equity({strategy.name: result, f"{benchmark.name} (benchmark)": bench}, args.plot)
         print(f"wrote chart to {args.plot}")
+
+
+def cmd_sweep(args) -> None:
+    from trading import research
+
+    cls = load_strategy(args.strategy)
+    base = parse_params(cls, args.param)
+    grid = research.expand_grid(cls, args.grid)
+    benchmark = build_strategy(args.benchmark, args.benchmark_param)
+
+    end = args.end or last_complete_session()
+    periods = research.split_periods(args.start, end, args.split)
+    variants = [cls(**{**base, **combo}) for combo in grid]
+    bars, _, _ = load_market(args, [*variants, benchmark], end)
+
+    print(
+        f"{len(grid)} combinations x {len(periods)} periods: "
+        + ", ".join(f"{name} {s}..{e}" for name, (s, e) in periods.items())
+    )
+    table = research.sweep(cls, base, grid, bars, periods, args.cash, args.slippage_bps)
+    first = next(iter(periods))
+    rank_col = f"{first}_{args.rank}"
+    # Higher is better for all rank metrics (drawdowns are negative numbers).
+    table = table.sort_values(rank_col, ascending=False).head(args.top)
+
+    bench = research.benchmark_rows(benchmark, bars, periods, args.cash, args.slippage_bps)
+    bench_label = {k: "" for k in grid[0]} | {next(iter(grid[0])): f"[{benchmark!r}]"}
+    table = pd.concat([pd.DataFrame([{**bench_label, **bench}]), table], ignore_index=True)
+
+    for col in table.columns:
+        table[col] = [_fmt(col.split("_", 1)[-1] if "_" in col else col, v) for v in table[col]]
+    print(f"ranked by {rank_col} (choose using {first} columns only)")
+    with pd.option_context("display.width", 250, "display.max_columns", 40):
+        print(table.to_string(index=False))
 
 
 PCT_KEYS = {"total_return", "cagr", "volatility", "max_drawdown", "time_in_market", "max_dd", "bench_cagr"}
@@ -244,22 +283,30 @@ def parse_args(argv=None) -> argparse.Namespace:
         )
         sp.add_argument("-v", "--verbose", action="store_true")
 
+    def market_args(sp, slippage_default=0.0):
+        sp.add_argument("--start", type=dt.date.fromisoformat, default=dt.date(2010, 1, 1))
+        sp.add_argument("--end", type=dt.date.fromisoformat, help="default: last completed session")
+        sp.add_argument("--cash", type=float, default=10_000.0)
+        sp.add_argument(
+            "--slippage-bps",
+            type=float,
+            default=slippage_default,
+            help=f"per-fill slippage in basis points (default {slippage_default:g})",
+        )
+        sp.add_argument("--source", choices=["yahoo", "schwab"], default="yahoo")
+        sp.add_argument("--benchmark", default="buy_and_hold")
+        sp.add_argument("--benchmark-param", action="append", default=[], metavar="KEY=VALUE")
+        sp.add_argument(
+            "--store",
+            choices=["auto", "postgres", "csv", "none"],
+            default="auto",
+            help="where price bars are cached (auto: postgres if DATABASE_URL is set, else csv)",
+        )
+        sp.add_argument("--cache-dir", default=".cache", help="directory for --store csv")
+
     bt = sub.add_parser("backtest", help="simulate a strategy on daily bars")
     strategy_args(bt)
-    bt.add_argument("--start", type=dt.date.fromisoformat, default=dt.date(2010, 1, 1))
-    bt.add_argument("--end", type=dt.date.fromisoformat, help="default: last completed session")
-    bt.add_argument("--cash", type=float, default=10_000.0)
-    bt.add_argument("--slippage-bps", type=float, default=0.0, help="per-fill slippage in basis points")
-    bt.add_argument("--source", choices=["yahoo", "schwab"], default="yahoo")
-    bt.add_argument("--benchmark", default="buy_and_hold")
-    bt.add_argument("--benchmark-param", action="append", default=[], metavar="KEY=VALUE")
-    bt.add_argument(
-        "--store",
-        choices=["auto", "postgres", "csv", "none"],
-        default="auto",
-        help="where price bars are cached (auto: postgres if DATABASE_URL is set, else csv)",
-    )
-    bt.add_argument("--cache-dir", default=".cache", help="directory for --store csv")
+    market_args(bt)
     bt.add_argument(
         "--save",
         action=argparse.BooleanOptionalAction,
@@ -269,6 +316,29 @@ def parse_args(argv=None) -> argparse.Namespace:
     bt.add_argument("--label", help="short note stored with the run")
     bt.add_argument("--out", help="directory for daily/trades CSVs")
     bt.add_argument("--plot", help="write an equity-curve PNG here")
+
+    sw = sub.add_parser(
+        "sweep",
+        help="backtest a grid of params, tuned on a train period and checked on a test period",
+    )
+    strategy_args(sw)
+    market_args(sw, slippage_default=5.0)
+    sw.add_argument(
+        "-g",
+        "--grid",
+        action="append",
+        required=True,
+        metavar="KEY=V1,V2,...",
+        help="values to try for a param (repeatable; all combinations are run)",
+    )
+    sw.add_argument(
+        "--split",
+        type=dt.date.fromisoformat,
+        default=dt.date(2020, 1, 1),
+        help="first day of the test period (default 2020-01-01)",
+    )
+    sw.add_argument("--rank", choices=["sharpe", "cagr", "max_drawdown"], default="sharpe")
+    sw.add_argument("--top", type=int, default=20, help="show the best N combinations")
 
     runs = sub.add_parser("runs", help="list and compare saved backtest runs")
     runs_sub = runs.add_subparsers(dest="runs_command", required=True)
@@ -301,6 +371,7 @@ def main(argv=None) -> None:
     commands = {
         "list": cmd_list,
         "backtest": cmd_backtest,
+        "sweep": cmd_sweep,
         "runs": cmd_runs,
         "db": cmd_db,
         "dry-run": cmd_dry_run,

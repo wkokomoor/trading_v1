@@ -239,7 +239,8 @@ def _fmt_weights(weights: Weights | None) -> str:
 # Chart
 # --------------------------------------------------------------------------- #
 
-SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]  # fixed categorical order
+# Fixed categorical order (validated palette): blue, orange, aqua, yellow, magenta, green, violet, red.
+SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 
 
 def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
@@ -252,6 +253,8 @@ def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
     from matplotlib.ticker import FuncFormatter
 
     n = len(results)
+    if n > len(SERIES_COLORS):
+        raise ValueError(f"can plot at most {len(SERIES_COLORS)} series at once, got {n}")
     fig, ax = plt.subplots(figsize=(10, 5.5 + 0.25 * n), dpi=150)
     fig.patch.set_facecolor("#fcfcfb")
     ax.set_facecolor("#fcfcfb")
