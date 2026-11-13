@@ -22,6 +22,18 @@ VIX_OPEN_UNRELIABLE = (dt.date(2008, 1, 1), dt.date(2009, 12, 31))
 
 VIX_OPEN_FEATURES = ("vix_open", "vix_gap", "vix_vs_sma20", "vix_gap_divergence")
 
+# NYSE has roughly 3,000 issues, so |ADD| and |TICK| can't plausibly exceed this.
+INTERNALS_LIMIT = 4000.0
+
+
+def _mask_impossible(df: pd.DataFrame, limit: float) -> pd.DataFrame:
+    """Set a day's internals bar to NaN when any of its OHLC values is out of range."""
+    ohlc = df[["open", "high", "low", "close"]]
+    bad = (ohlc.abs() > limit).any(axis=1)
+    out = df.copy()
+    out.loc[bad, ["open", "high", "low", "close"]] = np.nan
+    return out
+
 
 def build_features(bars: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """One row per SPY session. Needs SPY and VIX; uses ADD / TICK when present.
@@ -64,16 +76,19 @@ def build_features(bars: dict[str, pd.DataFrame]) -> pd.DataFrame:
     bad = (idx >= VIX_OPEN_UNRELIABLE[0]) & (idx <= VIX_OPEN_UNRELIABLE[1])
     f.loc[bad, list(VIX_OPEN_FEATURES)] = np.nan
 
-    # --- Market internals, when a data source provides them (daily bars; close = end-of-day value)
+    # --- Market internals, when a data source provides them. Schwab's daily $ADD / $TICK
+    # bars: high / low = the session's extreme readings, close = the end-of-day value.
+    # Readings beyond what's possible for ~3,000 NYSE issues are bad prints (Schwab's $TICK
+    # history contains values like 760,000) and are masked.
     if "ADD" in bars:  # NYSE advancers minus decliners
-        add = bars["ADD"].reindex(idx)["close"]
+        add = _mask_impossible(bars["ADD"].reindex(idx), INTERNALS_LIMIT)["close"]
         f["add_prev"] = add.shift(1)
         f["add_chg_1d"] = add.shift(1) - add.shift(2)
         f["add_5d_mean"] = add.rolling(5).mean().shift(1)
         # Rally without participation: SPY up over 5 days while breadth is negative.
         f["add_spy_divergence"] = np.sign(f["spy_ret_5d"]) * -np.sign(f["add_5d_mean"])
     if "TICK" in bars:  # NYSE TICK: daily high / low / close of the intraday index
-        tick = bars["TICK"].reindex(idx)
+        tick = _mask_impossible(bars["TICK"].reindex(idx), INTERNALS_LIMIT)
         f["tick_close_prev"] = tick["close"].shift(1)
         f["tick_high_prev"] = tick["high"].shift(1)
         f["tick_low_prev"] = tick["low"].shift(1)

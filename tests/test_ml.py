@@ -96,3 +96,13 @@ def test_rf_strategy_waits_in_cash_until_enough_training_data(bars):
     s = RfDirection(min_train_rows=10_000, n_estimators=10)
     res = run_backtest(s, {k: bars[k] for k in ("SPY", "VIX", "UPRO")}, dt.date(2016, 6, 1), END)
     assert (res.daily["holding"] == "CASH").all()
+
+
+def test_impossible_internals_readings_are_masked(bars):
+    tick = bars["TICK"].copy()
+    bad_day = tick.index[400]
+    tick.loc[bad_day, ["open", "high", "low"]] = 760000.0  # a real bad print seen in Schwab's $TICK
+    f = ml.build_features({"SPY": bars["SPY"], "VIX": bars["VIX"], "TICK": tick})
+    next_day = tick.index[401]
+    assert np.isnan(f.loc[next_day, "tick_high_prev"])  # the bad day's values never reach a feature
+    assert f["tick_high_prev"].dropna().abs().max() <= ml.INTERNALS_LIMIT

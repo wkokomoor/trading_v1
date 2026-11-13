@@ -419,8 +419,8 @@ Historical option chains (and so true historical 0-DTE straddle prices) aren't f
 | Indicator | Free daily history | Status |
 |---|---|---|
 | VIX | 1990 → (Yahoo) | Used |
-| NYSE ADD | Unicorn Research daily A/D files, **but that site stopped updating in Feb 2020**, which leaves no test period | Not used; needs Schwab `$ADD` or a paid feed |
-| NYSE TICK | None | Not used; needs Schwab `$TICK` (short intraday history) or paid intraday data |
+| NYSE ADD | Unicorn Research daily A/D files, **but that site stopped updating in Feb 2020**, which leaves no test period | Later found: **Schwab `$ADD` daily, Aug 2012 →** (see "Adding market internals" below) |
+| NYSE TICK | None | Later found: **Schwab `$TICK` daily, Mar 2006 →** (see below) |
 
 The feature code already supports `ADD` and `TICK` when a data source provides them (`-p internals=ADD,TICK`). A leakage test covers them too.
 
@@ -477,3 +477,40 @@ The ADD and TICK ideas are *intraday* signals: breadth failing to confirm a rall
 2. **Decide later in the morning** (for example 10:00 ET, after the opening divergences have formed), then hold until the next open, which is still not a day trade. This needs **intraday** ADD, TICK, VIX and SPY history, and the backtester would need an intraday decision time. That's a bigger change, and the paid data is unavoidable.
 
 Either way, apply the same bar: out-of-sample AUC clearly above 0.52, confidence that actually rises with outcomes, and a better result than `vol_filter`, before anything goes to shadow trading.
+
+### Adding market internals: Schwab daily `$ADD` / `$TICK` (2026-11-13)
+
+After logging in to Schwab (`trading schwab auth`), `trading schwab check` showed how much history the API provides:
+
+| Symbol | Daily candles | 1-minute candles |
+|---|---|---|
+| `$ADD` | Aug 2012 → (3,587 days) | about the last 10 days only |
+| `$TICK` | Mar 2006 → (5,200 days) | about the last 10 days only |
+| SPY / `$VIX` | 1993 / 1990 → | about the last 10 days only |
+
+In Schwab's daily internals bars, **high and low are the session's extreme readings** and close is the end-of-day value. `$TICK` contains bad prints (values like 760,000, when NYSE TICK can't exceed about ±3,000), so any bar with a value over 4,000 is masked in `trading/ml.py`.
+
+**Test:** the same random forest, with and without the 8 internals features. These cover prior-day ADD (level, change and 5-day mean), "rally without participation" (SPY up over 5 days while ADD's 5-day mean is negative), prior-day TICK close/high/low, and "TICK exhaustion" (SPY at a 5-day high while TICK's high lags its 5-day max). Both models used **identical days** (internals exist from Aug 2012), were retrained each January and scored out of sample from 2016. Reproduce with `uv run python research/rf_internals.py`.
+
+| Out-of-sample AUC (90% CI) | 2016–2019 | 2020–2026 |
+|---|---|---|
+| VIX + SPY | 0.483 (0.454–0.513) | 0.477 (0.454–0.499) |
+| **VIX + SPY + ADD + TICK** | **0.474 (0.446–0.506)** | **0.481 (0.460–0.503)** |
+| Full model, shuffled labels | 0.483 | 0.507 |
+
+| Internals model's P(up), quintile | Avg. predicted | Actually up |
+|---|---|---|
+| lowest | 51.1% | 59.6% |
+| 2 | 55.0% | 57.7% |
+| 3 | 56.4% | 55.7% |
+| 4 | 57.9% | 55.9% |
+| highest | 60.8% | 52.7% |
+
+- **Internals add no skill.** Both models are within noise of a coin flip; their AUCs sit inside the range of the shuffled-label model.
+- **Calibration runs slightly backwards.** The days the model was most bullish on were up *least* often. Inverting the model would mean choosing a direction after seeing the results, which is classic overfitting, and the effect sits at the edge of the noise range. It is recorded here, not acted on.
+- **Every threshold underperformed holding UPRO or `vol_filter`.** At P ≥ 0.55, 2020–2026 returned −1.6%/yr, compared with 22.7% for UPRO and 21.6% for `vol_filter`.
+- **Permutation importance:** all four TICK features had *negative* out-of-sample importance. ADD's 5-day mean helped in only 5 of 11 years.
+
+### Verdict on `rf_direction`
+
+**Rejected at the daily-open timescale, with VIX, SPY and prior-day internals.** The intraday form of the ADD/TICK ideas (divergences *during* the session, acted on by mid-morning) remains untested, because Schwab keeps only about 10 days of 1-minute history. The Phase D internals collector would build that history; revisit after about 12 months of collected data. The bar stays the same: out-of-sample AUC clearly above 0.52, and confidence that actually rises with outcomes.
