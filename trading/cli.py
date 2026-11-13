@@ -36,13 +36,33 @@ from trading.engine import plot_equity, run_backtest
 from trading.strategy import available_strategies, load_strategy, parse_params
 
 
-def make_schwab_client():
-    import schwabdev
+def make_schwab_client(interactive: bool = True):
+    from trading.schwab import make_client
 
-    s = get_settings()
-    if not s.schwab_app_key or not s.schwab_app_secret:
-        raise SystemExit("SCHWAB_APP_KEY / SCHWAB_APP_SECRET missing: see .env.example")
-    return schwabdev.Client(s.schwab_app_key, s.schwab_app_secret, s.schwab_callback_url)
+    return make_client(interactive)
+
+
+def cmd_schwab(args) -> None:
+    from trading import schwab
+
+    if args.schwab_command == "auth":
+        print("Opening Schwab login. After approving, your browser lands on the callback URL")
+        print("(it may show 'site can't be reached'; that's expected). Copy the FULL address bar URL")
+        print("and paste it here.\n")
+        client = schwab.make_client(interactive=True)
+        client.update_tokens(force_refresh_token=args.force)
+        print("\nLogged in. Tokens saved to ~/.schwabdev/tokens.db (valid 7 days).")
+        print("Test with: uv run trading schwab check")
+        return
+
+    try:
+        client = schwab.make_client(interactive=False)
+        rows = schwab.check(client)
+    except schwab.LoginRequired as e:
+        raise SystemExit(str(e)) from None
+    width = max(len(k) for k, _ in rows)
+    for k, v in rows:
+        print(f"{k:<{width}}  {v}")
 
 
 def database_url() -> str:
@@ -75,7 +95,7 @@ def cmd_list(_args) -> None:
 
 def load_market(args, strategies, end: dt.date, want_db: bool = False, extra_symbols=()):
     """Bars for every symbol the given strategies need, plus the DB engine if one is in use."""
-    lookback = max([s.required_lookback() for s in strategies] or [1])
+    lookback = max([s.required_history() for s in strategies] or [1])
     fetch_start = args.start - dt.timedelta(days=math.ceil(lookback * 1.6) + 15)
     if getattr(args, "cash_rate", "0") == "tbill":
         extra_symbols = (*extra_symbols, "IRX")
@@ -589,6 +609,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     ic = db_sub.add_parser("import-csv", help="copy the .cache/ CSV bars into Postgres")
     ic.add_argument("--cache-dir", default=".cache")
 
+    sc = sub.add_parser("schwab", help="Schwab API login and connection check")
+    sc_sub = sc.add_subparsers(dest="schwab_command", required=True)
+    au = sc_sub.add_parser("auth", help="interactive browser login (run in a terminal; needed weekly)")
+    au.add_argument("--force", action="store_true", help="log in again even if the current login is valid")
+    sc_sub.add_parser("check", help="read-only connection test and data-depth check (no balances shown)")
+
     dr = sub.add_parser("dry-run", help="today's target and the orders it WOULD place (sends nothing)")
     strategy_args(dr)
     return p.parse_args(argv)
@@ -609,5 +635,6 @@ def main(argv=None) -> None:
         "runs": cmd_runs,
         "db": cmd_db,
         "dry-run": cmd_dry_run,
+        "schwab": cmd_schwab,
     }
     commands[args.command](args)

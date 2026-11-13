@@ -52,7 +52,7 @@ class YahooSource:
 
 class SchwabSource:
     name = "schwab"
-    tickers = {"VIX": "$VIX", "VIX3M": "$VIX3M"}
+    tickers = {"VIX": "$VIX", "VIX3M": "$VIX3M", "ADD": "$ADD", "TICK": "$TICK"}  # NYSE internals
 
     def __init__(self, client):
         self.client = client

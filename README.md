@@ -52,6 +52,8 @@ uv run trading runs list                              # saved runs, newest first
 uv run trading runs show 4                            # one run vs. its benchmark
 uv run trading runs show 1 3 4 --plot compare.png     # several runs side by side
 
+uv run trading schwab auth                            # Schwab browser login (in a terminal; weekly)
+uv run trading schwab check                           # read-only connection test + data-depth report
 uv run trading dry-run -s spy_vix                     # today's orders, NOT sent
 ```
 
@@ -113,6 +115,7 @@ When `symbols` or `lookback` depend on params, override `required_symbols()` or 
 | `vol_filter` | **Current candidate.** Hold UPRO while SPY's 20-day realized volatility is below 20%, otherwise cash. See docs/RESEARCH.md Part 5. |
 | `spy_vix` | The original VIX/SPY-gap switch (rejected; see docs/RESEARCH.md) between UPRO and SPXU. `-p short=` makes it go to cash instead of shorting. |
 | `vix_gap` | SPY/VIX v2: gap rule plus VIX-based sizing and an optional trend filter. Research only. |
+| `rf_direction` | Random forest on VIX/SPY features (plus ADD/TICK when available); long UPRO when P(up) ≥ threshold. **No skill found** with VIX, SPY or Schwab ADD/TICK features (docs/RESEARCH.md Part 7). |
 | `sma_trend` | Hold UPRO while SPY is above its 200-day average, otherwise cash. |
 | `buy_and_hold` | Hold one symbol. This is the default benchmark. |
 
