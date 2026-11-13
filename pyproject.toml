@@ -12,6 +12,9 @@ dependencies = [
     "matplotlib>=3.8",
     "schwabdev>=4.0,<5",
     "python-dotenv>=1.0",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
 ]
 
 [project.scripts]
@@ -49,7 +52,6 @@ select = [
 ]
 ignore = [
     "SIM108", # if/else blocks are often clearer than nested ternaries in strategy logic
-    "SIM112", # Schwab .env keys are lowercase (app_key); revisit with config.py in Phase B
 ]
 
 [tool.ruff.lint.isort]

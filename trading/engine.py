@@ -247,26 +247,42 @@ def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
+    import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     from matplotlib.ticker import FuncFormatter
 
-    fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
+    n = len(results)
+    fig, ax = plt.subplots(figsize=(10, 5.5 + 0.25 * n), dpi=150)
     fig.patch.set_facecolor("#fcfcfb")
     ax.set_facecolor("#fcfcfb")
+    ends = []
     for (label, res), color in zip(results.items(), SERIES_COLORS, strict=False):
         eq = res.daily["equity"]
         x = pd.to_datetime(eq.index)
         ax.plot(x, eq.values, color=color, linewidth=2, label=label)
+        short = label.split("(")[0].strip()  # full params live in the legend
+        ends.append((x[-1], eq.iloc[-1], f"{short}  ${eq.iloc[-1]:,.0f}"))
+    ax.set_yscale("log")
+
+    # End-of-line labels, nudged apart vertically so close finishes don't overlap.
+    fig.subplots_adjust(left=0.09, right=0.78, top=0.93, bottom=0.1 + 0.045 * n)
+    to_px = ax.transData.transform
+    min_gap_pt = 12
+    placed = []
+    for x_end, y_end, text in sorted(ends, key=lambda e: e[1]):
+        y_pt = to_px((mdates.date2num(x_end), y_end))[1] * 72 / fig.dpi
+        target = max(y_pt, placed[-1] + min_gap_pt) if placed else y_pt
+        placed.append(target)
         ax.annotate(
-            f"{label}  ${eq.iloc[-1]:,.0f}",
-            (x[-1], eq.iloc[-1]),
-            xytext=(6, 0),
+            text,
+            (x_end, y_end),
+            xytext=(6, target - y_pt),
             textcoords="offset points",
             va="center",
             fontsize=9,
             color="#0b0b0b",
+            annotation_clip=False,
         )
-    ax.set_yscale("log")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
     ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
     for side in ("top", "right"):
@@ -275,8 +291,13 @@ def plot_equity(results: dict[str, BacktestResult], path: str) -> None:
         ax.spines[side].set_color("#c3c2b7")
     ax.tick_params(colors="#52514e", labelsize=9)
     ax.set_title("Equity (log scale)", loc="left", color="#0b0b0b", fontsize=12)
-    ax.legend(frameon=False, loc="upper left", labelcolor="#52514e")
-    fig.tight_layout()
+    ax.legend(
+        frameon=False,
+        loc="upper left",
+        bbox_to_anchor=(0, -0.07),
+        labelcolor="#52514e",
+        fontsize=9,
+    )
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     fig.savefig(path, facecolor=fig.get_facecolor())
     plt.close(fig)
