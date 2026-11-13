@@ -250,6 +250,8 @@ This decides whether anything goes live.
 - [x] First research round: see [RESEARCH.md](RESEARCH.md). The original `spy_vix` fails; `vix_gap` was an interim candidate, superseded by `vol_filter`.
 - [x] Feasibility (oracle) test, traditional-indicator screen, intraday-exit study, and options indicators: RESEARCH.md Parts 1, 3, 4 and 6.
 - [ ] **GEX-based position sizing for `vol_filter`.** Parked on 2026-11-13; full brief in [section 3a](#3a-parked-gex-based-position-sizing) below.
+- [x] Random-forest direction model (`rf_direction`): no skill with VIX/SPY features (AUC 0.50, 2010–2026), and none after adding Schwab daily `$ADD`/`$TICK` (AUC 0.47–0.48, 2016–2026). See RESEARCH.md Part 7.
+- [x] ADD/TICK data: Schwab provides **daily** `$ADD` (Aug 2012 →) and `$TICK` (Mar 2006 →), but only about 10 days of 1-minute history. The intraday form of the ADD/TICK ideas stays untested until the internals collector (Phase D) has built about 12 months of history.
 - [ ] Decide the objective: Sharpe, or growth subject to a drawdown limit (see RESEARCH.md). **This blocks the gate below.** `vol_filter` ties SPY's Sharpe over 2010–2026 (0.84 vs 0.84) but trails it over 2015–2026 (0.74 vs 0.81), so it passes only under a growth-with-drawdown-limit objective.
 - [x] Credit interest on idle cash (`--cash-rate`, default: historical T-bill yield).
 - [x] `trading walkforward`: re-tune yearly on prior data, trade the next year; compare with fixed settings. Finding: yearly re-tuning hurts, so use fixed params.
@@ -271,7 +273,7 @@ This decides whether anything goes live.
   - Refuse to trade on stale data (today's open quote missing or obviously wrong).
 - [ ] Idempotent `trade` job using the `live_runs` uniqueness rule.
 - [ ] Job entry points: `python -m trading job trade|reconcile|ingest`.
-- [ ] Token storage plus the `auth` command (see the Schwab token lifecycle section).
+- [ ] Token storage for the cloud (Secret Manager). Done locally: `trading schwab auth` (interactive login, weekly) and `trading schwab check` (read-only test; fails fast when a login is needed).
 - [ ] Tests for every job against the fake Schwab client and a Postgres container.
 - [ ] **Market-internals collector:** extend the collector to save `$ADD`, `$TICK` and `$VIX` quotes several times a day (open, 10:00 and the close) to build first-hand internals history for `rf_direction`.
 - [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and it gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
