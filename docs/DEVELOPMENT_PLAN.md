@@ -241,8 +241,12 @@ Each phase ends in something usable. Phases B and C can run in parallel.
 
 This decides whether anything goes live.
 
-- [ ] `python -m trading sweep`: run a grid of params, with results stored in Postgres.
-- [ ] Walk-forward evaluation: tune on years N…N+k, test on the following year, and roll forward.
+- [x] `trading sweep`: run a grid of params with a train/test split, ranked on train results only (default 5 bps slippage). Sweep results aren't stored in Postgres yet; chosen candidates are saved with `backtest`.
+- [x] First research round: see [RESEARCH.md](RESEARCH.md). The original `spy_vix` fails, and `vix_gap` (trend + VIX sizing) is the current candidate.
+- [ ] Decide the objective: Sharpe, or growth subject to a drawdown limit (see RESEARCH.md).
+- [x] Credit interest on idle cash (`--cash-rate`, default: historical T-bill yield).
+- [x] `trading walkforward`: re-tune yearly on prior data, trade the next year; compare with fixed settings. Finding: yearly re-tuning hurts, so use fixed params.
+- [x] Candidate for Phase D: `vol_filter` with fixed defaults (20-day / 20%). See RESEARCH.md Part 5.
 - [ ] Breakdowns by market regime (2010–14, 2015–19, 2020, 2021, 2022, 2023+).
 - [ ] Realistic costs: default `--slippage-bps` from measured live slippage once Phase D produces data.
 - [ ] Additional metrics: Sortino, Calmar, worst month, longest drawdown, turnover.

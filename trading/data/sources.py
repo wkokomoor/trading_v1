@@ -31,7 +31,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
 
 class YahooSource:
     name = "yahoo"
-    tickers = {"VIX": "^VIX"}
+    tickers = {"VIX": "^VIX", "VIX3M": "^VIX3M", "IRX": "^IRX"}  # IRX: 13-week T-bill yield, %
 
     def fetch(self, symbol: str, start: dt.date, end: dt.date) -> pd.DataFrame:
         import yfinance as yf
@@ -46,7 +46,7 @@ class YahooSource:
 
 class SchwabSource:
     name = "schwab"
-    tickers = {"VIX": "$VIX"}
+    tickers = {"VIX": "$VIX", "VIX3M": "$VIX3M"}
 
     def __init__(self, client):
         self.client = client

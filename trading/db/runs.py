@@ -80,6 +80,7 @@ def save_run(
     source: str,
     slippage_bps: float,
     label: str | None = None,
+    cash_rate: str | None = None,
 ) -> int:
     sha, dirty = code_version()
     with engine.begin() as conn:
@@ -95,6 +96,7 @@ def save_run(
                 end_date=result.daily.index[-1],
                 start_cash=result.start_cash,
                 slippage_bps=slippage_bps,
+                cash_rate=cash_rate,
                 git_sha=sha,
                 git_dirty=dirty,
                 label=label,

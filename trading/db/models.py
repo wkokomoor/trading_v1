@@ -74,6 +74,7 @@ backtest_runs = Table(
     Column("end_date", Date, nullable=False),
     Column("start_cash", Double, nullable=False),
     Column("slippage_bps", Double, nullable=False),
+    Column("cash_rate", Text),  # "tbill" or a constant like "0.04"; NULL for runs before it existed
     Column("git_sha", Text),
     Column("git_dirty", Boolean, nullable=False, server_default="false"),
     Column("label", Text),
