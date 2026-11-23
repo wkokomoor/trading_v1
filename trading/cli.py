@@ -536,6 +536,8 @@ def warn_if_login_expiring(days: float = 2.0) -> None:
 def cmd_job(args) -> None:
     from trading import jobs
 
+    if args.job == "notify":
+        return cmd_notify(args)
     engine = db_engine()
     warn_if_login_expiring()
     client = make_schwab_client(interactive=False)
@@ -553,6 +555,29 @@ def cmd_job(args) -> None:
     elif args.job == "reconcile":
         for result in jobs.reconcile(engine, client):
             print("\n".join(f"{k:>10}: {v}" for k, v in result.items()), end="\n\n")
+
+
+def cmd_notify(args) -> None:
+    """Daily summary email (no Schwab access needed)."""
+    from trading import notify
+    from trading import portfolio as pf
+    from trading.data.calendar import ET
+
+    engine = db_engine()
+    day = args.date or dt.datetime.now(ET).date()
+    sent = 0
+    for p in pf.list_portfolios(engine):
+        body = notify.daily_summary(engine, p.name, day)
+        if body is None:
+            continue  # didn't run that day (weekend, holiday, or the job didn't run)
+        subject = f"{p.name} {day:%b %d}: {body.splitlines()[0].removeprefix('Daily direction: ')}"
+        print(f"--- {subject}\n{body}\n")
+        if not args.dry_run:
+            recipients = notify.send_email(subject, body)
+            print(f"sent to {', '.join(recipients)}")
+        sent += 1
+    if sent == 0:
+        print(f"no portfolio ran on {day}; nothing to send")
 
 
 def cmd_dry_run(args) -> None:
@@ -735,6 +760,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     jt.add_argument("--slippage-bps", type=float, default=0.0, help="extra slippage on simulated fills")
     jb_sub.add_parser("ingest", help="refresh daily bars for every portfolio's symbols")
     jb_sub.add_parser("reconcile", help="mark shadow portfolios at the close")
+    jn = jb_sub.add_parser("notify", help="email each portfolio's daily summary (after reconcile)")
+    jn.add_argument("--date", type=dt.date.fromisoformat, help="default: today (New York)")
+    jn.add_argument("--dry-run", action="store_true", help="print the message without sending")
 
     dr = sub.add_parser("dry-run", help="today's target and the orders it WOULD place (sends nothing)")
     strategy_args(dr)

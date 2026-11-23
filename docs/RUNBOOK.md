@@ -9,6 +9,7 @@ Project `schwab-trader-wk`, region `us-central1`. All settings are in `deploy/en
 | 09:35 | `trade-0935` | `trading-trade` | `trading job trade`: decide at the open, risk-check, simulated (shadow) fills |
 | 16:30 | `ingest-1630` | `trading-ingest` | `trading job ingest`: refresh daily bars from Schwab |
 | 16:45 | `reconcile-1645` | `trading-reconcile` | `trading job reconcile`: mark shadow portfolios at the close |
+| 17:00 | `notify-1700` | `trading-notify` | `trading job notify`: email the daily summary (direction, trades, cash, total) |
 
 On market holidays the jobs run and exit with `status: skipped`. That's normal and doesn't alert.
 
@@ -25,6 +26,23 @@ deploy/upload-schwab-tokens.sh           # uploads it; older copies are destroye
 ```
 
 If the login lapses, the trade job fails safely (no orders) and alerts. Renew, then re-run the day's trade with `deploy/run-job.sh`.
+
+## Daily summary email
+
+Each weekday at 17:00 ET, every portfolio that ran that day gets a short summary, sent from `SMTP_USER` to `NOTIFY_TO` (both in `deploy/env.sh`):
+
+```
+Daily direction: Bull
+BOUGHT: UPRO 124 shares. Total cost: $9,922.48
+HOLDING: UPRO 124 shares ($9,950.00)
+CASH: $77.52
+TOTAL: $10,027.52 (+0.27% today)
+```
+
+- **Setup (once):** create a Gmail app password at https://myaccount.google.com/apppasswords (this needs 2-Step Verification on the account). Then run `deploy/set-email-password.sh`, which prompts without echoing and stores it in Secret Manager, then `deploy/deploy.sh`.
+- **Get it as a text:** Google Fi turns email sent to `<10-digit number>@msg.fi.google.com` into an SMS. Add that address to `NOTIFY_TO` (comma-separated) and redeploy.
+- **Preview a past day:** `JOB=trading-notify deploy/run-job.sh job notify --date 2026-11-23 --dry-run`
+- **Change a password:** run `deploy/set-email-password.sh` again; jobs always read the latest version.
 
 ## Common tasks
 
