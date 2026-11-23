@@ -1,0 +1,8 @@
+# Builds deploy/Dockerfile on Cloud Build (linux/amd64, what Cloud Run runs) and pushes it.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "deploy/Dockerfile", "--build-arg", "GIT_SHA=${_GIT_SHA}", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+substitutions:
+  _IMAGE: ""
+  _GIT_SHA: "unknown"

@@ -294,22 +294,30 @@ This decides whether anything goes live.
 - [ ] **Options collector job** (`job collect-options`, about 09:35 ET): snapshot SPY's 0-DTE and next-expiry option chains from Schwab `option_chains` into Postgres, and compute the ATM straddle (expected move) and our own GEX estimate. It builds the first-hand history that the free proxies in RESEARCH.md Part 6 can only approximate, and gives a fallback GEX source (see section 3a, data risk). Start it early: its value grows with every day collected.
 - [ ] Token storage for the cloud (Secret Manager). Done locally: `trading schwab auth` (interactive login, weekly) and `trading schwab check` (read-only test; fails fast when a login is needed).
 
-### Phase E: GCP deployment (2–3 days)
+### Phase E: GCP deployment
 
-- [ ] `deploy/Dockerfile` (slim Python image, runs as a non-root user).
-- [ ] Terraform for:
-  - the project and APIs, Artifact Registry, Cloud SQL (Postgres, private IP, automated backups);
-  - Secret Manager entries, a service account with least-privilege roles;
-  - three Cloud Run Jobs and three Cloud Scheduler triggers;
-  - log-based alert policies.
-- [ ] GitHub Actions deploy workflow (on merge to `main`): test → build → push → update jobs → run migrations. Authenticate with Workload Identity Federation, not a stored key file.
-- [ ] Alerts:
-  - a job failed;
-  - the `trade` job didn't finish by 09:45 ET;
-  - a risk check blocked an order;
-  - the token expires within 2 days;
-  - the reconcile job found a mismatch.
-- [ ] Runbook in `docs/`: re-authenticate Schwab, flip the kill switch, re-run a job, restore the database.
+Project **`schwab-trader-wk`** (display name "schwab-trader"), region **us-central1**. Day-to-day operations are in [RUNBOOK.md](RUNBOOK.md).
+
+- [x] GCP project created (2026-11-22). **Billing must be linked before `setup.sh` can run.**
+- [x] `deploy/Dockerfile`: `python:3.13-slim`; installs exact, hash-checked versions exported from `uv.lock`; runs as a non-root user; `.env` is excluded from both the image and the Cloud Build upload. Builds on Cloud Build (linux/amd64).
+- [x] Schwab login in the cloud: `tokens.db` is stored as the `schwab-tokens` secret, mounted read-only into each job, and copied to a writable temp file (`SCHWAB_TOKENS_FILE`).
+  - Weekly renewal: `trading schwab auth`, then `deploy/upload-schwab-tokens.sh`, which also destroys old versions.
+  - Jobs log a structured WARNING 2 days before the login expires.
+- [x] `deploy/setup.sh` (one-time, idempotent):
+  - APIs, an Artifact Registry repo, and a least-privilege service account;
+  - Cloud SQL Postgres 16 `db-f1-micro`: public IP with **no** authorized networks (reachable only through the IAM-authenticated connector), encryption required, 7 daily backups;
+  - secrets (a random DB password that only ever lives in Secret Manager; Schwab keys piped from `.env` and never printed);
+  - an email alert on any job WARNING or ERROR.
+- [x] `deploy/deploy.sh` (each release):
+  - refuses to run with uncommitted changes, or if `deploy/requirements.txt` is out of sync with `uv.lock`;
+  - builds the image tagged with the git SHA;
+  - deploys the migrate/trade/ingest/reconcile jobs and runs migrations;
+  - creates or updates the Scheduler triggers (09:35, 16:30 and 16:45 ET, Mon–Fri).
+- [x] Runbook: the weekly login, the kill switch, re-running jobs, logs, deploy/rollback, restore, costs.
+- [ ] **Run `deploy/setup.sh`, then `deploy/deploy.sh`**, then create the cloud shadow portfolio (a fresh start; the command is printed by `deploy.sh`). Watch the first scheduled day end to end.
+- [ ] Alert if the 09:35 trade job hasn't finished by 09:45 ET. This needs a metric-absence alert; not done yet.
+- [ ] GitHub Actions deploy on merge to `main`, using Workload Identity Federation (no stored key).
+- [ ] Optional: Terraform for the same resources, if the setup grows.
 
 ### Phase F: Go live, gradually
 

@@ -1,0 +1,21 @@
+{
+  "displayName": "trading: job warning or error",
+  "documentation": {
+    "content": "A Cloud Run trading job logged a WARNING or ERROR (a failed run, a blocked trade, or the Schwab login expiring soon). See docs/RUNBOOK.md.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Cloud Run job log with severity >= WARNING",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_job\" AND severity>=WARNING"
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": { "period": "3600s" },
+    "autoClose": "86400s"
+  },
+  "notificationChannels": ["__CHANNEL__"]
+}

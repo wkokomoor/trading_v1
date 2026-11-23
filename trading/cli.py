@@ -510,10 +510,34 @@ def cmd_kill_switch(args) -> None:
     )
 
 
+def cloud_log(severity: str, message: str, **fields) -> None:
+    """One JSON line on stdout; Cloud Logging reads `severity` and `message` from it."""
+    import json
+
+    print(json.dumps({"severity": severity, "message": message, **fields}, default=str), flush=True)
+
+
+def warn_if_login_expiring(days: float = 2.0) -> None:
+    from trading.schwab import login_expires_at
+
+    expires = login_expires_at()
+    if expires is None:
+        return
+    left = expires - dt.datetime.now(dt.UTC)
+    if left < dt.timedelta(days=days):
+        cloud_log(
+            "WARNING",
+            f"schwab login expires in {left.total_seconds() / 3600:.0f} hours: run `trading schwab auth` "
+            "and upload the tokens (deploy/upload-schwab-tokens.sh)",
+            expires_at=expires.isoformat(),
+        )
+
+
 def cmd_job(args) -> None:
     from trading import jobs
 
     engine = db_engine()
+    warn_if_login_expiring()
     client = make_schwab_client(interactive=False)
     if args.job == "trade":
         from trading import portfolio as pf

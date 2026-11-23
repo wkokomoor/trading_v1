@@ -1,0 +1,12 @@
+# Never send secrets or local state into an image.
+.env
+.env.*
+!.env.example
+.venv
+.cache
+.git
+results
+docs
+research
+tests
+**/__pycache__
