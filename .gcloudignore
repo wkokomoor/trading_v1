@@ -1,0 +1,8 @@
+# Files NOT uploaded to Cloud Build. Secrets and local state stay on this machine.
+.env
+.env.*
+.venv
+.cache
+.git
+results
+**/__pycache__

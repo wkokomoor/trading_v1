@@ -1,4 +1,5 @@
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
@@ -45,9 +46,49 @@ def test_non_interactive_client_raises_instead_of_prompting(monkeypatch):
             call_on_auth("https://api.schwabapi.com/v1/oauth/authorize?client_id=x")
 
     monkeypatch.setattr(schwabdev, "Client", PromptingClient)
-    monkeypatch.setattr(
-        schwab, "get_settings", lambda: type("S", (), {"schwab_app_key": "k", "schwab_app_secret": "s",
-                                                        "schwab_callback_url": "https://127.0.0.1"})()
-    )  # fmt: skip
+    fake = type("S", (), {})()
+    fake.schwab_app_key, fake.schwab_app_secret = "k", "s"
+    fake.schwab_callback_url, fake.schwab_tokens_file = "https://127.0.0.1", None
+    monkeypatch.setattr(schwab, "get_settings", lambda: fake)
     with pytest.raises(schwab.LoginRequired, match="trading schwab auth"):
         schwab.make_client(interactive=False)
+
+
+def _tokens_db(path, issued):
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE schwabdev (access_token_issued TEXT, refresh_token_issued TEXT)")
+        conn.execute("INSERT INTO schwabdev VALUES (?, ?)", (issued, issued))
+
+
+def test_login_expiry_is_seven_days_after_issue(tmp_path):
+    db = tmp_path / "tokens.db"
+    _tokens_db(db, "2026-11-23T02:43:44+00:00")
+    assert schwab.login_expires_at(str(db)) == dt.datetime(2026, 11, 30, 2, 43, 44, tzinfo=dt.UTC)
+    assert schwab.login_expires_at(str(tmp_path / "missing.db")) is None
+
+
+def test_cloud_tokens_are_copied_to_a_writable_temp_file(tmp_path, monkeypatch):
+    mounted = tmp_path / "mounted" / "tokens.db"
+    mounted.parent.mkdir()
+    _tokens_db(mounted, "2026-11-23T02:43:44+00:00")
+    settings = type("S", (), {"schwab_tokens_file": str(mounted)})()
+    monkeypatch.setattr(schwab, "get_settings", lambda: settings)
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "tmp"))
+    path = schwab.tokens_path()
+    assert path == str(tmp_path / "tmp" / "schwabdev" / "tokens.db")
+    assert Path(path).read_bytes() == mounted.read_bytes()
+
+
+def test_job_warns_in_cloud_log_format_when_login_is_expiring(tmp_path, monkeypatch, capsys):
+    import json
+
+    from trading import cli
+
+    db = tmp_path / "tokens.db"
+    _tokens_db(db, (dt.datetime.now(dt.UTC) - dt.timedelta(days=6)).isoformat())
+    monkeypatch.setattr(schwab, "get_settings", lambda: type("S", (), {"schwab_tokens_file": str(db)})())
+    cli.warn_if_login_expiring()
+    line = json.loads(capsys.readouterr().out)
+    assert line["severity"] == "WARNING" and "schwab login expires" in line["message"]

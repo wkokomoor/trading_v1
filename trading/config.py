@@ -19,6 +19,7 @@ class Settings:
     schwab_app_key: str | None
     schwab_app_secret: str | None
     schwab_callback_url: str
+    schwab_tokens_file: str | None  # cloud: read-only tokens.db mounted from Secret Manager
 
 
 def _env(name: str, legacy: str | None = None, default: str | None = None) -> str | None:
@@ -35,6 +36,7 @@ def get_settings() -> Settings:
         schwab_app_key=_env("SCHWAB_APP_KEY", "app_key"),
         schwab_app_secret=_env("SCHWAB_APP_SECRET", "app_secret"),
         schwab_callback_url=_env("SCHWAB_CALLBACK_URL", "callback_url", "https://127.0.0.1"),
+        schwab_tokens_file=_env("SCHWAB_TOKENS_FILE"),
     )
 
 

@@ -88,6 +88,10 @@ uv run trading kill-switch on --reason "..."                     # block all tra
 
 `job trade` is safe to re-run: each portfolio trades at most once per day, and on weekends, holidays or before the open it exits as "skipped". Every order passes the risk checks in `trading/risk.py` first: the kill switch, data sanity, the strategy's symbol list, a daily loss limit and the allocation cap.
 
+## Cloud deployment (Google Cloud)
+
+The trade, ingest and reconcile jobs run as Cloud Run Jobs on a schedule, with Cloud SQL for PostgreSQL. One-time setup is `deploy/setup.sh`; releases go out with `deploy/deploy.sh`. The weekly Schwab login renewal and all other operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
 ## Writing a strategy
 
 Add a file to `strategies/`. It will appear in `list` and you can run it with `-s <name>`. You can also pass any file path with `-s path/to/file.py`.

@@ -20,6 +20,45 @@ class LoginRequired(RuntimeError):
     pass
 
 
+LOCAL_TOKENS = "~/.schwabdev/tokens.db"
+REFRESH_TOKEN_LIFETIME = dt.timedelta(days=7)  # set by Schwab
+
+
+def tokens_path() -> str:
+    """Where schwabdev should keep tokens. In the cloud, SCHWAB_TOKENS_FILE points at a read-only
+    copy mounted from Secret Manager; it's copied to a writable temp file, because schwabdev
+    writes refreshed access tokens back to its database."""
+    src = get_settings().schwab_tokens_file
+    if not src:
+        return LOCAL_TOKENS
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    dst = Path(tempfile.gettempdir()) / "schwabdev" / "tokens.db"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    return str(dst)
+
+
+def login_expires_at(path: str | None = None) -> dt.datetime | None:
+    """When the Schwab refresh token (the weekly login) expires, from schwabdev's token DB."""
+    import sqlite3
+    from pathlib import Path
+
+    path = Path(path or get_settings().schwab_tokens_file or LOCAL_TOKENS).expanduser()
+    if not path.exists():
+        return None
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        row = conn.execute("SELECT refresh_token_issued FROM schwabdev LIMIT 1").fetchone()
+    if not row:
+        return None
+    issued = dt.datetime.fromisoformat(row[0])
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=dt.UTC)
+    return issued + REFRESH_TOKEN_LIFETIME
+
+
 def make_client(interactive: bool = True):
     """schwabdev client. Non-interactive clients raise LoginRequired instead of prompting."""
     import schwabdev
@@ -28,8 +67,11 @@ def make_client(interactive: bool = True):
     if not s.schwab_app_key or not s.schwab_app_secret:
         raise SystemExit("SCHWAB_APP_KEY / SCHWAB_APP_SECRET missing: see .env.example")
 
+    tokens_db = tokens_path()
     if interactive:
-        return schwabdev.Client(s.schwab_app_key, s.schwab_app_secret, s.schwab_callback_url)
+        return schwabdev.Client(
+            s.schwab_app_key, s.schwab_app_secret, s.schwab_callback_url, tokens_db=tokens_db
+        )
 
     # schwabdev catches exceptions raised by call_on_auth and keeps going, so record the
     # request and check it ourselves; quiet its retry warnings while doing so.
@@ -42,6 +84,7 @@ def make_client(interactive: bool = True):
             s.schwab_app_key,
             s.schwab_app_secret,
             s.schwab_callback_url,
+            tokens_db=tokens_db,
             call_on_auth=lambda auth_url: login_needed.append(auth_url),
         )
     finally:
@@ -64,6 +107,15 @@ def _candle_span(resp) -> tuple[int, str, str]:
 def check(client, symbols=("SPY", "$VIX", "$ADD", "$TICK")) -> list[tuple[str, str]]:
     """Read-only checks. Returns (check, result) rows; never prints balances or positions."""
     rows = []
+    expires = login_expires_at()
+    if expires:
+        left = expires - dt.datetime.now(dt.UTC)
+        rows.append(
+            (
+                "login expires",
+                f"{expires.astimezone(ET):%Y-%m-%d %H:%M} ET ({left.days}d {left.seconds // 3600}h left)",
+            )
+        )
 
     resp = client.linked_accounts()
     rows.append(
