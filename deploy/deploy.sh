@@ -62,5 +62,4 @@ schedule reconcile-1645 "45 16 * * 1-5" trading-reconcile
 
 log "Deployed $GIT_SHA"
 echo "First time only, create the shadow portfolio:"
-echo "  gcloud run jobs execute trading-trade --project $PROJECT --region $REGION --wait \\"
-echo "    --args=portfolio,create,shadow-vol,-s,vol_filter,--allocation,10000"
+echo "  deploy/run-job.sh portfolio create shadow-vol -s vol_filter --allocation 10000"

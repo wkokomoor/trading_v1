@@ -24,29 +24,25 @@ deploy/upload-schwab-tokens.sh           # uploads it; older copies are destroye
 .venv/bin/trading schwab check           # optional: shows the new expiry
 ```
 
-If the login lapses, the trade job fails safely (no orders) and alerts. Renew, then re-run the day's job (below).
+If the login lapses, the trade job fails safely (no orders) and alerts. Renew, then re-run the day's trade with `deploy/run-job.sh`.
 
 ## Common tasks
 
-Set these first:
-
-```sh
-P=schwab-trader-wk; R=us-central1
-```
+`deploy/run-job.sh <trading command...>` runs any `trading` command once in the cloud and **prints its output**. It calls the Cloud Run API directly, because `gcloud run jobs execute --args` is broken in gcloud 548 ("Unknown name priorityTier at overrides").
 
 | Task | Command |
 |---|---|
-| **Stop all trading now** | `gcloud run jobs execute trading-trade --project $P --region $R --wait --args=kill-switch,on,--reason,"<why>"` |
-| Resume trading | same, with `--args=kill-switch,off` |
-| Kill switch status | same, with `--args=kill-switch,status` |
-| See the shadow portfolio | same, with `--args=portfolio,show,shadow-vol` (output in the job's logs) |
-| Re-run today's trade by hand | `gcloud run jobs execute trading-trade --project $P --region $R --wait` (safe: at most once per day) |
-| Pause the schedule | `gcloud scheduler jobs pause trade-0935 --project $P --location $R` (`resume` to undo) |
-| Read job logs | Cloud Console → Cloud Run → Jobs → job → Logs, or `gcloud logging read 'resource.type="cloud_run_job"' --project $P --limit 50` |
+| **Stop all trading now** | `deploy/run-job.sh kill-switch on --reason "<why>"` |
+| Resume trading | `deploy/run-job.sh kill-switch off` |
+| Kill switch status | `deploy/run-job.sh kill-switch status` |
+| See the shadow portfolio | `deploy/run-job.sh portfolio show shadow-vol` |
+| Check Schwab from the cloud | `deploy/run-job.sh schwab check` |
+| Re-run today's trade by hand | `deploy/run-job.sh` (safe: at most once per day) |
+| Re-run ingest / reconcile | `JOB=trading-ingest deploy/run-job.sh`, `JOB=trading-reconcile deploy/run-job.sh` |
+| Pause the schedule | `gcloud scheduler jobs pause trade-0935 --project schwab-trader-wk --location us-central1` (`resume` to undo) |
+| Read job logs | Cloud Console → Cloud Run → Jobs → job → Logs, or `gcloud logging read 'resource.type="cloud_run_job"' --project schwab-trader-wk --limit 50` |
 | Deploy new code | commit, then `deploy/deploy.sh` (builds, migrates, updates jobs and schedules) |
 | Roll back | `git checkout <older commit>` and `deploy/deploy.sh`; images are tagged by commit |
-
-`--args` replaces the job's normal arguments for that one execution only. Any `trading` command can be run this way.
 
 ## When something goes wrong
 
