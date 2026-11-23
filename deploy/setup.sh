@@ -18,6 +18,21 @@ gc services enable run.googleapis.com cloudscheduler.googleapis.com sqladmin.goo
   secretmanager.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com \
   logging.googleapis.com monitoring.googleapis.com iam.googleapis.com
 
+# Newly enabled APIs can take a few minutes to start answering; wait for each one used below.
+wait_for() {  # description, command...
+  local what="$1"; shift
+  for attempt in $(seq 1 30); do
+    "$@" >/dev/null 2>&1 && return 0
+    [[ $attempt == 1 ]] && echo "  waiting for the $what API to become available..."
+    sleep 10
+  done
+  echo "the $what API still isn't available after 5 minutes; re-run deploy/setup.sh later"; exit 1
+}
+wait_for "Artifact Registry" gc artifacts repositories list --location "$REGION"
+wait_for "Cloud SQL Admin" gc sql instances list
+wait_for "Secret Manager" gc secrets list
+wait_for "IAM" gc iam service-accounts list
+
 log "Artifact Registry repository: $REPO"
 gc artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2>&1 ||
   gc artifacts repositories create "$REPO" --location "$REGION" --repository-format docker \
