@@ -15,9 +15,38 @@ import pandas as pd
 from trading.config import get_settings
 from trading.data.calendar import ET
 
+log = logging.getLogger(__name__)
+
 
 class LoginRequired(RuntimeError):
     pass
+
+
+RETRY_STATUS = {429, 500, 502, 503, 504}
+RETRY_DELAYS = (15, 45, 120)  # seconds; about 3 minutes in total before giving up
+
+
+def with_retries(call, delays=RETRY_DELAYS, sleep=None):
+    """Run `call()` (returning a requests.Response), retrying transient failures: rate limits,
+    Schwab server errors and dropped connections. Other errors (e.g. 401) return at once."""
+    import time
+
+    import requests
+
+    sleep = sleep or time.sleep
+    for delay in (*delays, None):
+        try:
+            resp = call()
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if delay is None:
+                raise
+            log.warning("Schwab request failed (%s); retrying in %ss", type(e).__name__, delay)
+        else:
+            if resp.status_code not in RETRY_STATUS or delay is None:
+                return resp
+            log.warning("Schwab returned HTTP %s; retrying in %ss", resp.status_code, delay)
+        sleep(delay)
+    raise AssertionError("unreachable")
 
 
 LOCAL_TOKENS = "~/.schwabdev/tokens.db"

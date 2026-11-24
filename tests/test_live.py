@@ -7,6 +7,8 @@ from trading.strategy import load_strategy
 
 
 class Resp:
+    status_code = 200
+
     def __init__(self, payload):
         self.payload = payload
 

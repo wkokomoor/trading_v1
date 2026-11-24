@@ -41,6 +41,15 @@ def direction(target: dict | None) -> str:
     return ", ".join(sorted(held))
 
 
+def short_error(error: str | None, limit: int = 90) -> str:
+    """A text-message-sized error: no URLs, at most `limit` characters."""
+    import re
+
+    text = re.sub(r"\s*for url: \S+", "", error or "unknown error")
+    text = re.sub(r"https?://\S+", "", text).strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _money(x: float) -> str:
     return f"-${-x:,.2f}" if x < 0 else f"${x:,.2f}"
 
@@ -113,11 +122,12 @@ def daily_summary(engine, portfolio: str, day: dt.date) -> str | None:
         ).scalar()
         profits = realized_profits(conn, portfolio, day)
 
-    lines = [f"Daily direction: {direction(run['target'])}"]
     if run["status"] == "failed":
-        lines.append(f"FAILED: {run['error']}")
-    elif run["status"] == "blocked":
-        lines.append(f"BLOCKED: {'; '.join(run['risk']) or 'risk checks'}")
+        lines = ["Daily direction: unknown (trade run failed)", f"FAILED: {short_error(run['error'])}"]
+    else:
+        lines = [f"Daily direction: {direction(run['target'])}"]
+        if run["status"] == "blocked":
+            lines.append(f"BLOCKED: {'; '.join(run['risk']) or 'risk checks'}")
 
     traded = False
     for o in ords:

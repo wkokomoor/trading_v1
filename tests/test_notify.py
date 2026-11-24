@@ -125,3 +125,18 @@ def test_send_email_refuses_without_configuration(monkeypatch):
     monkeypatch.setattr(notify, "get_settings", lambda: settings)
     with pytest.raises(RuntimeError, match="not configured"):
         notify.send_email("s", "b")
+
+
+def test_failed_run_says_so_with_a_short_error(book):
+    p = pf.get_portfolio(book, "book")
+    run_id, _ = pf.start_run(book, D1, p, "test")
+    err = (
+        "HTTPError: 500 Server Error: Internal Server Error for url: "
+        "https://api.schwabapi.com/marketdata/v1/quotes?symbols=SPY%2CUPRO&indicative=False"
+    )
+    with book.begin() as conn:
+        pf.finish_run(conn, run_id, "failed", error=err)
+    lines = notify.daily_summary(book, "book", D1).splitlines()
+    assert lines[0] == "Daily direction: unknown (trade run failed)"
+    assert lines[1] == "FAILED: HTTPError: 500 Server Error: Internal Server Error"
+    assert "https://" not in "\n".join(lines)
