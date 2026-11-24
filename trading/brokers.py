@@ -36,7 +36,9 @@ def _ts(ms):
 def schwab_quotes(client, symbols) -> dict[str, Quote]:
     """Quotes keyed by canonical symbol ("VIX", not "$VIX")."""
     tickers = {s: SchwabSource.tickers.get(s, s) for s in symbols}
-    resp = client.quotes(list(tickers.values()))
+    from trading.schwab import with_retries
+
+    resp = with_retries(lambda: client.quotes(list(tickers.values())))
     resp.raise_for_status()
     data = resp.json()
     out = {}

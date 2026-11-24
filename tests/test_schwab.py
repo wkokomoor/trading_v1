@@ -92,3 +92,41 @@ def test_job_warns_in_cloud_log_format_when_login_is_expiring(tmp_path, monkeypa
     cli.warn_if_login_expiring()
     line = json.loads(capsys.readouterr().out)
     assert line["severity"] == "WARNING" and "schwab login expires" in line["message"]
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status_code = status
+
+
+def test_with_retries_rides_out_server_errors():
+    calls, waits = iter([_Resp(500), _Resp(503), _Resp(200)]), []
+    resp = schwab.with_retries(lambda: next(calls), delays=(1, 2, 3), sleep=waits.append)
+    assert resp.status_code == 200 and waits == [1, 2]
+
+
+def test_with_retries_gives_up_and_returns_the_last_error():
+    waits = []
+    resp = schwab.with_retries(lambda: _Resp(500), delays=(1, 2), sleep=waits.append)
+    assert resp.status_code == 500 and waits == [1, 2]
+
+
+def test_with_retries_does_not_retry_client_errors():
+    waits = []
+    assert schwab.with_retries(lambda: _Resp(401), delays=(1,), sleep=waits.append).status_code == 401
+    assert waits == []
+
+
+def test_with_retries_retries_dropped_connections():
+    import requests
+
+    attempts, waits = [], []
+
+    def flaky():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise requests.ConnectionError("reset")
+        return _Resp(200)
+
+    assert schwab.with_retries(flaky, delays=(5,), sleep=waits.append).status_code == 200
+    assert waits == [5]

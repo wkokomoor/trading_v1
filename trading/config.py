@@ -20,6 +20,10 @@ class Settings:
     schwab_app_secret: str | None
     schwab_callback_url: str
     schwab_tokens_file: str | None  # cloud: read-only tokens.db mounted from Secret Manager
+    smtp_host: str
+    smtp_user: str | None  # sender, e.g. a Gmail address
+    smtp_password: str | None  # Gmail: an app password, never the account password
+    notify_to: str | None  # comma-separated recipients for the daily summary
 
 
 def _env(name: str, legacy: str | None = None, default: str | None = None) -> str | None:
@@ -37,6 +41,10 @@ def get_settings() -> Settings:
         schwab_app_secret=_env("SCHWAB_APP_SECRET", "app_secret"),
         schwab_callback_url=_env("SCHWAB_CALLBACK_URL", "callback_url", "https://127.0.0.1"),
         schwab_tokens_file=_env("SCHWAB_TOKENS_FILE"),
+        smtp_host=_env("SMTP_HOST", default="smtp.gmail.com"),
+        smtp_user=_env("SMTP_USER"),
+        smtp_password=_env("SMTP_PASSWORD"),
+        notify_to=_env("NOTIFY_TO"),
     )
 
 

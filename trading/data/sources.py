@@ -58,13 +58,17 @@ class SchwabSource:
         self.client = client
 
     def fetch(self, symbol: str, start: dt.date, end: dt.date) -> pd.DataFrame:
-        resp = self.client.price_history(
-            self.tickers.get(symbol, symbol),
-            periodType="year",
-            frequencyType="daily",
-            frequency=1,
-            startDate=dt.datetime.combine(start, dt.time(0, 0), ET),
-            endDate=dt.datetime.combine(end, dt.time(23, 59), ET),
+        from trading.schwab import with_retries
+
+        resp = with_retries(
+            lambda: self.client.price_history(
+                self.tickers.get(symbol, symbol),
+                periodType="year",
+                frequencyType="daily",
+                frequency=1,
+                startDate=dt.datetime.combine(start, dt.time(0, 0), ET),
+                endDate=dt.datetime.combine(end, dt.time(23, 59), ET),
+            )
         )
         resp.raise_for_status()
         candles = resp.json().get("candles", [])

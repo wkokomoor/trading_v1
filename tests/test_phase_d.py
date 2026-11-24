@@ -101,6 +101,8 @@ def test_shadow_broker_fills_at_bid_ask_and_never_overspends():
 
 
 class Resp:
+    status_code = 200
+
     def __init__(self, payload):
         self.payload = payload
 
