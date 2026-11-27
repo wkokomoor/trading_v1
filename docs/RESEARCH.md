@@ -565,3 +565,116 @@ No add-on helps in both periods. The pre-FOMC and pre-holiday versions help only
 ### Verdict
 
 **Track A is closed. No change to `vol_filter`.** The calendar effects are too small and too noisy, and where they exist (the FOMC-day gain) they fall in the overnight hours before a decision at the open. If the strategy were ever redesigned to decide at the previous **close** (see Part 4, "overnight only"), the FOMC effect would be worth retesting with that timing.
+
+---
+
+## Part 9: Market sentiment, our own Fear & Greed index (2026-11-24)
+
+**The question:** is there a reliable, standard source of market sentiment that can serve as a direction indicator?
+
+### Sources checked
+
+| Source | Measures | Frequency, history | Access (checked 2026-11-24) |
+|---|---|---|---|
+| AAII Sentiment Survey | % of individual investors bullish / bearish | Weekly, 1987→ | Blocked to scripts (HTTP 403); likely needs a browser or membership |
+| NAAIM Exposure Index | Active managers' equity exposure | Weekly, 2006→ | No machine-readable download found |
+| Cboe put/call ratios | Put vs. call volume | Daily, 1995→ | Free CSV, **but it stops in Oct 2019**; later data is paid (Cboe DataShop). Schwab has no history. |
+| CNN Fear & Greed | Composite of 7 market measures | Daily | Blocked (HTTP 418); no official feed |
+| U. Michigan consumer sentiment | Household mood | Monthly | FRED; too slow for trading |
+| News / social-media sentiment | NLP scores | Intraday | Paid vendors |
+
+**Conclusion:** none of these is free, daily, long-history *and* reliably accessible. So we built our own.
+
+### The index (`trading/sentiment.py`)
+
+The index is modeled on CNN's composite and uses only data we already source:
+
+| Component (higher = greedier) | Data |
+|---|---|
+| `fear_vix`: VIX vs. its 50-day average, inverted | Yahoo ^VIX |
+| `momentum`: SPY vs. its 125-day average | Yahoo SPY |
+| `breadth`: share of NYSE volume in advancing stocks, 10-day average | Schwab `$UVOL` / `$DVOL` |
+| `junk_bond`: HYG / IEI (junk vs. similar-duration Treasuries) vs. its 50-day average | Yahoo HYG, IEI |
+| `safe_haven`: SPY minus TLT, 20-day return | Yahoo SPY, TLT |
+
+**How it's scored:**
+- Each component is ranked against its own previous 252 sessions, giving 0–100; there are no fitted parameters.
+- The index is the average of the available components, with at least 3 of 5 required.
+- It runs from Oct 2006, and values use closes through day *t*, so a strategy uses day *t−1* at the open. A test confirms there is no look-ahead: truncated history gives identical values.
+
+**Data issues handled:**
+- **Junk-bond comparison:** HYG vs. **LQD** was tried first, but LQD's much longer duration made the 2022 rate shock read as "greed" (the Oct 12, 2022 bottom scored 31). Switching to IEI (3–7 year Treasuries) fixed it: 17.6, Extreme Fear.
+- **Schwab up/down volume:** the units change around 2013 (both series by the same factor, so the share is unaffected), and some days are bad prints (one day 60x normal, others near zero). A day is masked when its total is more than 10x above or below the previous 20-day median.
+
+**Validation:** known panics all score near 0:
+
+| Date | Event | Index |
+|---|---|---|
+| Oct 10, 2008 | Financial crisis | 0.0 |
+| Aug 8, 2011 | US credit downgrade | 0.0 |
+| Aug 24, 2015 | Flash-crash open | 0.9 |
+| Dec 24, 2018 | Q4 selloff | 0.8 |
+| Mar 16, 2020 | COVID crash | 0.6 |
+| Jun 16, 2022 | Bear-market low | 9.0 |
+| Oct 12, 2022 | Bear-market low | 17.6 |
+| Apr 8, 2025 | Tariff shock | 1.4 |
+
+Because the index is relative to the past year, a long, calm rally becomes "normal", so slow-building euphoria rates as neutral to greed: late 2017 scored 49 and late 2021 scored 41.
+
+![Fear & Greed index](img/fear_greed.png)
+
+### Hypotheses (fixed before testing)
+
+Reproduce with `uv run python research/sentiment_index.py`. Signals use the previous close's index, acted on at the open. The bar is |Newey-West t| ≥ 2 with the expected sign in both periods; Newey-West corrects for overlapping multi-day returns. Train is Nov 2006–2019 for H1/H2, and Jun 2009–2019 for H3 (limited by UPRO); test is 2020–2026.
+
+**H1: extreme fear (≤ 10) is followed by above-average returns. H2: extreme greed (≥ 90) is followed by below-average returns.**
+
+| Hypothesis | Horizon | Days (train / test) | Extra return, train / test | NW t, train / test |
+|---|---|---|---|---|
+| H1 fear | 1 day | 244 / 89 | +9 / −2 bps | +0.57 / −0.07 |
+| H1 fear | 5 days | 244 / 85 | +43 / −26 bps | +1.05 / −0.25 |
+| H1 fear | 20 days | 244 / 82 | +76 / +54 bps | +0.94 / +0.25 |
+| H1 fear | 60 days | 244 / 82 | +53 / +403 bps | +0.40 / +1.30 |
+| H2 greed | 1 day | 41 / 9 | −37 / +0 bps | −2.37 / +0.01 |
+| H2 greed | 5 days | 41 / 9 | −25 / −232 bps | −0.63 / −2.56 |
+| H2 greed | 20 days | 41 / 9 | +69 / −273 bps | +0.58 / −1.14 |
+| H2 greed | 60 days | 41 / 9 | **+461** / −263 bps | **+2.59** / −0.57 |
+
+**Neither passes.** Extreme fear tends to come before *some* positive drift over 20–60 days, but it's statistically weak. Extreme greed is too rare (9 days in the test period) to judge, and over 60 days in 2006–19 it came before strong *gains*, the opposite of the hypothesis.
+
+**H3: capitulation re-entry for `vol_filter`.** When `vol_filter` is in cash, the index is ≤ 10 and 20-day volatility is below its level 5 sessions earlier, hold A) UPRO or B) SPY. Five bps per trade; cash earns 0% here.
+
+| Variant | CAGR 2009–19 | CAGR 2020–26 | Max DD 2009–19 | Max DD 2020–26 | Sharpe 2009–19 | Sharpe 2020–26 |
+|---|---|---|---|---|---|---|
+| `vol_filter` | 29.4% | 21.5% | −36% | −38% | 0.92 | 0.71 |
+| H3A: UPRO, index ≤ 10 | 32.9% | 20.1% | −35% | −43% | 0.99 | 0.68 |
+| H3B: SPY, index ≤ 10 | 30.5% | 21.0% | −36% | −40% | 0.94 | 0.70 |
+| *Sensitivity: UPRO, index ≤ 25* | 31.6% | 28.4% | −41% | −44% | 0.94 | 0.83 |
+| *Sensitivity: SPY, index ≤ 25* | 30.2% | 23.9% | −35% | −40% | 0.93 | 0.76 |
+
+**The pre-registered H3 fails.** It helps in 2009–19 and hurts in 2020–26. It rarely triggers, only 14 days in 17 years, because at peak fear volatility is usually still rising. The ≤ 25 variants look better, and **"SPY re-entry at ≤ 25" improved both periods modestly**. But 25 was a sensitivity check chosen alongside the hypothesis, not the hypothesis itself, so adopting it now would be choosing after seeing the results.
+
+### Verdict
+
+- **The index works as a fear/greed gauge**: every major panic since 2008 reads near 0. It's free, daily and fully reproducible.
+- **As a direction signal it fails the pre-registered tests**, consistent with everything else in this document. Its value is over weeks, not days, and even there it's weak.
+- **One candidate to recheck out of sample, not adopt:** SPY re-entry when `vol_filter` is in cash, the index is ≤ 25 and volatility is easing. The honest next test is new data: either simply wait, or add it to a second shadow portfolio and compare it with `shadow-vol` over the coming months.
+
+### Addendum: sentiment as a feature in the random-forest direction model (2026-11-26)
+
+**The question:** does adding the index help `rf_direction` (Part 7)? Reproduce with `uv run python research/rf_sentiment.py`.
+
+**Added features**, all from the previous close: the composite score, its five component scores, and the composite's 5-session change. The two models were trained on identical days and retrained every January. Testing starts in 2013, because the index plus the excluded 2008–09 VIX opens leave only about 750 training days before then.
+
+| Out-of-sample AUC (90% CI) | 2013–2019 | 2020–2026 |
+|---|---|---|
+| VIX + SPY | 0.486 (0.462–0.508) | 0.467 (0.444–0.487) |
+| **VIX + SPY + sentiment** | **0.489 (0.466–0.513)** | **0.470 (0.449–0.491)** |
+| With sentiment, shuffled labels | 0.494 | 0.484 |
+
+- **No improvement.** The +0.003 AUC change is noise; both models sit at or below a coin flip, the same as the shuffled-label model.
+- **The confidence score still runs backwards.** The model's most bearish 20% of days were up 59.4% of the time, and its most bullish 20% were up 55.8%.
+- **Every threshold underperformed `vol_filter`.** At P ≥ 0.53, 2020–26 earned 8.7%/yr, against 21.4% for `vol_filter`.
+- **The 5-day sentiment change** was the forest's top permutation-importance feature (helping in 12 of 14 years). But on its own it predicts nothing: AUC 0.476 (2008–12), 0.504 (2013–19) and 0.492 (2020–26). Inside a model with no skill, feature importance reflects noise being rearranged, not signal.
+
+**Verdict:** sentiment doesn't rescue `rf_direction`. That's now 6 direction-signal families with no next-day skill, in a rules-based or machine-learning setting: VIX, traditional indicators, options (GEX and expected move), NYSE internals, calendar effects and sentiment.
