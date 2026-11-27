@@ -659,3 +659,22 @@ Reproduce with `uv run python research/sentiment_index.py`. Signals use the prev
 - **The index works as a fear/greed gauge**: every major panic since 2008 reads near 0. It's free, daily and fully reproducible.
 - **As a direction signal it fails the pre-registered tests**, consistent with everything else in this document. Its value is over weeks, not days, and even there it's weak.
 - **One candidate to recheck out of sample, not adopt:** SPY re-entry when `vol_filter` is in cash, the index is ≤ 25 and volatility is easing. The honest next test is new data: either simply wait, or add it to a second shadow portfolio and compare it with `shadow-vol` over the coming months.
+
+### Addendum: sentiment as a feature in the random-forest direction model (2026-11-26)
+
+**The question:** does adding the index help `rf_direction` (Part 7)? Reproduce with `uv run python research/rf_sentiment.py`.
+
+**Added features**, all from the previous close: the composite score, its five component scores, and the composite's 5-session change. The two models were trained on identical days and retrained every January. Testing starts in 2013, because the index plus the excluded 2008–09 VIX opens leave only about 750 training days before then.
+
+| Out-of-sample AUC (90% CI) | 2013–2019 | 2020–2026 |
+|---|---|---|
+| VIX + SPY | 0.486 (0.462–0.508) | 0.467 (0.444–0.487) |
+| **VIX + SPY + sentiment** | **0.489 (0.466–0.513)** | **0.470 (0.449–0.491)** |
+| With sentiment, shuffled labels | 0.494 | 0.484 |
+
+- **No improvement.** The +0.003 AUC change is noise; both models sit at or below a coin flip, the same as the shuffled-label model.
+- **The confidence score still runs backwards.** The model's most bearish 20% of days were up 59.4% of the time, and its most bullish 20% were up 55.8%.
+- **Every threshold underperformed `vol_filter`.** At P ≥ 0.53, 2020–26 earned 8.7%/yr, against 21.4% for `vol_filter`.
+- **The 5-day sentiment change** was the forest's top permutation-importance feature (helping in 12 of 14 years). But on its own it predicts nothing: AUC 0.476 (2008–12), 0.504 (2013–19) and 0.492 (2020–26). Inside a model with no skill, feature importance reflects noise being rearranged, not signal.
+
+**Verdict:** sentiment doesn't rescue `rf_direction`. That's now 6 direction-signal families with no next-day skill, in a rules-based or machine-learning setting: VIX, traditional indicators, options (GEX and expected move), NYSE internals, calendar effects and sentiment.
